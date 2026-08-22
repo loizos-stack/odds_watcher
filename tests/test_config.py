@@ -124,3 +124,23 @@ def test_default_lead_is_frugal_but_valid():
     config = Config.from_env(BASE)
     assert config.baseline_lead_seconds == 900
     assert config.baseline_lead_seconds >= config.window_start_seconds + 2 * config.poll_interval_seconds
+
+
+def test_sport_override_does_not_need_a_correct_env(monkeypatch, tmp_path):
+    """--sport exists so discovery works before SPORTS is known."""
+    from odds_watcher import cli
+
+    seen = {}
+
+    def fake_sports(config, search=None):
+        seen["sports"] = config.sports
+        return 0
+
+    monkeypatch.setattr(cli, "cmd_leagues", lambda config, search=None: fake_sports(config, search))
+    monkeypatch.setenv("ODDS_API_KEY", "k")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+    monkeypatch.setenv("SPORTS", "football")
+
+    cli.main(["leagues", "--sport", "baseball", "--env-file", str(tmp_path / "none.env")])
+    assert seen["sports"] == ("baseball",)

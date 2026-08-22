@@ -347,3 +347,27 @@ def test_uncapped_alerts_are_not_marked_as_sent(config, store):
     assert "BET365" in telegram.sent[0]
     assert store.get_state(quote(1.50)).alert_count == 1
     assert store.get_state(quote(1.80, bookmaker="betano")).alert_count == 0
+
+
+def test_bad_sport_slug_is_explained_with_near_matches(config, capsys, monkeypatch):
+    """"Baseball" is rejected where "baseball" works — say so, don't just 400."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.http import HttpError
+
+    class PickyApi:
+        budget = None
+
+        def get_leagues(self, sport):
+            raise HttpError(400, '{"error":"Invalid sport slug"}', f"/leagues?sport={sport}")
+
+        def get_sports(self):
+            return [("baseball", "Baseball"), ("football", "Football")]
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, PickyApi(), None))
+    assert cli.cmd_leagues(dataclasses.replace(config, sports=("Baseball",))) == 1
+
+    out = capsys.readouterr().out
+    assert "slugs are lowercase" in out
+    assert "did you mean, for 'Baseball': baseball" in out

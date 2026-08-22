@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "probe", "coverage", "chat-id", "status"],
     )
     parser.add_argument(
+        "--sport",
+        default=None,
+        help="override SPORTS for this command, e.g. --sport baseball (discovery commands)",
+    )
+    parser.add_argument(
         "--search",
         default=None,
         help="filter the `bookmakers` / `leagues` listing, e.g. --search premier",
@@ -160,6 +165,7 @@ def cmd_check(config: Config) -> int:
     except TransportError as exc:
         ok = False
         print(f"✗ events endpoint: {exc}", file=sys.stderr)
+        _sport_error(api, config, exc)
 
     hour, day = budget.remaining()
     print(f"· request budget left: {hour}/hour, {day}/day")
@@ -227,6 +233,7 @@ def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
             rows.extend(api.get_leagues(sport))
     except TransportError as exc:
         print(f"✗ could not list leagues: {exc}", file=sys.stderr)
+        _sport_error(api, config, exc)
         return 1
     finally:
         store.close()
@@ -243,6 +250,36 @@ def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
         print(f"{identifier.ljust(width)}  {label}")
     print(f"\n{len(rows)} league(s). Put the left-hand identifiers in LEAGUES in your .env.")
     return 0
+
+
+def _suggest_sports(api, wanted: tuple) -> None:
+    """After a rejected sport, show the slugs that resemble what was asked for.
+
+    Sport slugs are lowercase; "Baseball" is rejected where "baseball" works,
+    which is not something an error message should leave you to guess.
+    """
+    try:
+        rows = api.get_sports()
+    except TransportError:
+        return
+    known = {identifier for identifier, _ in rows}
+    for name in wanted:
+        if name in known:
+            continue
+        needle = name.strip().lower()
+        matches = [i for i, label in rows if needle in i.lower() or needle in label.lower()]
+        if matches:
+            print(f"  did you mean, for {name!r}: {', '.join(matches[:8])}")
+        else:
+            print(f"  no sport resembling {name!r}; run `py -m odds_watcher sports` for the full list")
+
+
+def _sport_error(api, config: Config, exc) -> None:
+    """Explain a failure that is really a bad sport slug."""
+    if "sport" not in str(exc).lower():
+        return
+    print("\nThe sport identifier in SPORTS is not one this API accepts (slugs are lowercase).")
+    _suggest_sports(api, config.sports)
 
 
 def _suggest_bookmakers(api, wanted: tuple) -> None:
@@ -371,6 +408,7 @@ def cmd_markets(config: Config, search: Optional[str] = None) -> int:
                 entry[book] = entry.get(book, 0) + count
     except TransportError as exc:
         print(f"✗ could not list markets: {exc}", file=sys.stderr)
+        _sport_error(api, config, exc)
         return 1
     finally:
         store.close()
@@ -447,6 +485,7 @@ def cmd_probe(config: Config) -> int:
         blocks = api.get_odds_payloads([e.id for e in events], config.bookmakers)
     except TransportError as exc:
         print(f"✗ probe failed: {exc}", file=sys.stderr)
+        _sport_error(api, config, exc)
         return 1
     finally:
         store.close()
@@ -522,6 +561,7 @@ def cmd_coverage(config: Config) -> int:
             blocks.extend(api.get_odds_payloads(batch, config.bookmakers))
     except TransportError as exc:
         print(f"✗ coverage check failed: {exc}", file=sys.stderr)
+        _sport_error(api, config, exc)
         return 1
     finally:
         store.close()
@@ -605,6 +645,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         config = replace_dry_run(config)
+    if args.sport:
+        # Discovery must not depend on .env already being right — that is the
+        # thing you are using these commands to work out.
+        import dataclasses
+
+        config = dataclasses.replace(config, sports=(args.sport,))
     setup_logging(args.log_level or config.log_level)
 
     if args.command == "check":
