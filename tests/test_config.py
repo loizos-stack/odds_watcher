@@ -53,3 +53,31 @@ def test_dotenv_does_not_override_real_environment(tmp_path, monkeypatch):
 
     assert os.environ["ODDS_API_KEY"] == "from-shell"
     assert os.environ["MIN_DROP_PCT"] == "7.5"
+
+
+def test_force_utf8_output_survives_odd_streams(monkeypatch):
+    """Windows redirects stdout to a cp1252 stream; reconfiguring must not crash."""
+    import sys
+
+    from odds_watcher.cli import force_utf8_output
+
+    calls = []
+
+    class Reconfigurable:
+        def reconfigure(self, **kwargs):
+            calls.append(kwargs)
+
+    class Stubborn:
+        def reconfigure(self, **kwargs):
+            raise ValueError("underlying stream detached")
+
+    class Ancient:  # no reconfigure at all (e.g. a captured StringIO shim)
+        pass
+
+    monkeypatch.setattr(sys, "stdout", Reconfigurable())
+    monkeypatch.setattr(sys, "stderr", Stubborn())
+    force_utf8_output()
+    assert calls == [{"encoding": "utf-8", "errors": "replace"}]
+
+    monkeypatch.setattr(sys, "stdout", Ancient())
+    force_utf8_output()  # must not raise

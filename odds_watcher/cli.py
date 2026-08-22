@@ -48,6 +48,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def force_utf8_output() -> None:
+    """Make stdout/stderr UTF-8 regardless of the platform's code page.
+
+    On Windows the console is fine, but as soon as output is redirected to a
+    file or a pipe Python falls back to the locale encoding (cp1252), and the
+    ✓/📉 characters in this CLI raise UnicodeEncodeError. Reconfiguring with
+    errors="replace" keeps output readable everywhere instead of crashing.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # already detached, or not a text stream
+            pass
+
+
 def setup_logging(level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
@@ -180,6 +198,7 @@ def _report(alerts: list[Alert]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    force_utf8_output()
     load_dotenv(Path(args.env_file))
     try:
         config = Config.from_env()
