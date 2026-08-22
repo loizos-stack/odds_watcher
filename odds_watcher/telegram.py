@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 
 from .detector import Alert
-from .http import HttpError, build_url, request_json
+from .http import TransportError, build_url, request_json
 from .util import format_clock, format_countdown
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class TelegramClient:
         }
         try:
             return request_json(self._url("sendMessage"), method="POST", payload=payload, timeout=self.timeout)
-        except HttpError as exc:
+        except TransportError as exc:
             log.error("telegram sendMessage failed: %s", exc)
             raise
 

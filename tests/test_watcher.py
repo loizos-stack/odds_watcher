@@ -143,3 +143,31 @@ def test_api_errors_do_not_kill_the_loop(config, store):
 
     watcher = Watcher(config, BrokenApi([EVENT], []), FakeTelegram(), store)
     assert watcher.poll_once(at(5)) == []
+
+
+def test_network_failure_is_handled_like_any_other_outage(config, store):
+    """A dropped connection must not escape as a traceback (cron `once` mode)."""
+    from odds_watcher.http import TransportError
+
+    class OfflineApi(FakeApi):
+        def get_multi_odds(self, event_ids, bookmakers):
+            raise TransportError("api2.odds-api.io unreachable after 3 attempts")
+
+    watcher = Watcher(config, OfflineApi([EVENT], []), FakeTelegram(), store)
+    assert watcher.poll_once(at(5)) == []
+
+
+def test_telegram_outage_keeps_the_alert_pending(config, store):
+    from odds_watcher.http import TransportError
+
+    class OfflineTelegram(FakeTelegram):
+        def send_message(self, text, **kwargs):
+            raise TransportError("api.telegram.org unreachable")
+
+    watcher, api, _ = make(
+        config, store, [[quote(2.00)], [quote(1.80)], [quote(1.80)]], telegram=OfflineTelegram()
+    )
+    watcher.poll_once(at(20))
+    assert len(watcher.poll_once(at(5))) == 1
+    watcher.telegram = FakeTelegram()
+    assert len(watcher.poll_once(at(4))) == 1  # not marked as sent, so still alertable

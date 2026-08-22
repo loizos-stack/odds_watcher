@@ -19,7 +19,7 @@ from typing import Iterable, Optional, Sequence
 
 from .config import Config
 from .detector import Alert, DropDetector
-from .http import HttpError
+from .http import TransportError
 from .odds_api import BudgetExceeded, Event, OddsApiClient, Quote
 from .store import Store
 from .telegram import TelegramClient, format_digest
@@ -72,7 +72,7 @@ class Watcher:
             except BudgetExceeded as exc:
                 log.warning("%s", exc)
                 break
-            except HttpError as exc:
+            except TransportError as exc:
                 log.error("failed to load events for sport=%s league=%s: %s", sport, league, exc)
 
         if events or force:
@@ -108,7 +108,7 @@ class Watcher:
             except BudgetExceeded as exc:
                 log.warning("%s", exc)
                 break
-            except HttpError as exc:
+            except TransportError as exc:
                 log.error("odds request failed: %s", exc)
 
         alerts: list[Alert] = []
@@ -129,7 +129,7 @@ class Watcher:
         for group in chunked(alerts, ALERTS_PER_MESSAGE):
             try:
                 self.telegram.send_message(format_digest(list(group)))
-            except HttpError:
+            except TransportError:
                 log.error("could not deliver %d alert(s); will retry next poll", len(group))
                 continue
             for alert in group:

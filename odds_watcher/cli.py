@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .config import Config, ConfigError, load_dotenv
 from .detector import Alert
-from .http import HttpError
+from .http import TransportError
 from .odds_api import OddsApiClient
 from .store import RequestBudget, Store
 from .telegram import TelegramClient
@@ -87,7 +87,7 @@ def cmd_check(config: Config) -> int:
             f"Alerting on drops ≥ {config.min_drop_pct:.1f}% {config.alert_window_label}."
         )
         print(f"✓ Test message sent to chat {config.telegram_chat_id}")
-    except HttpError as exc:
+    except TransportError as exc:
         ok = False
         print(f"✗ Telegram: {exc}", file=sys.stderr)
 
@@ -100,7 +100,7 @@ def cmd_check(config: Config) -> int:
                 f"! {', '.join(missing)} not selected on the account — "
                 "run `python -m odds_watcher select-bookmakers`"
             )
-    except HttpError as exc:
+    except TransportError as exc:
         ok = False
         print(f"✗ odds-api.io: {exc}", file=sys.stderr)
 
@@ -112,7 +112,7 @@ def cmd_check(config: Config) -> int:
                 f"   · {event.name} — {format_clock(event.start_ts)} "
                 f"(in {format_countdown(event.seconds_to_start(now_ts()))})"
             )
-    except HttpError as exc:
+    except TransportError as exc:
         ok = False
         print(f"✗ events endpoint: {exc}", file=sys.stderr)
 
@@ -128,7 +128,7 @@ def cmd_select_bookmakers(config: Config) -> int:
         api.select_bookmakers(config.bookmakers)
         print(f"✓ account bound to: {', '.join(api.get_selected_bookmakers())}")
         return 0
-    except HttpError as exc:
+    except TransportError as exc:
         print(f"✗ could not select bookmakers: {exc}", file=sys.stderr)
         return 1
     finally:

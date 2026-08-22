@@ -170,3 +170,32 @@ def test_budget_stops_requests():
     except BudgetExceeded:
         return
     raise AssertionError("expected BudgetExceeded")
+
+
+def test_network_errors_surface_as_transport_errors_without_the_key(monkeypatch):
+    from odds_watcher.http import TransportError, redact, request_json
+
+    monkeypatch.setattr(
+        "odds_watcher.http.urllib.request.urlopen",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("Tunnel connection failed")),
+    )
+    try:
+        request_json("https://api2.odds-api.io/v3/events?apiKey=SUPERSECRET", retries=2, sleep=lambda _: None)
+    except TransportError as exc:
+        assert "SUPERSECRET" not in str(exc)
+        assert "apiKey=***" in str(exc)
+    else:
+        raise AssertionError("expected TransportError")
+
+    for token in ("12345:AAH-real-format", "test-token"):
+        assert redact(f"https://api.telegram.org/bot{token}/sendMessage") == (
+            "https://api.telegram.org/bot***/sendMessage"
+        )
+
+
+def test_http_errors_are_transport_errors_and_redacted():
+    from odds_watcher.http import HttpError, TransportError
+
+    error = HttpError(500, "boom", "https://api2.odds-api.io/v3/odds?apiKey=SUPERSECRET&eventId=1")
+    assert isinstance(error, TransportError)
+    assert "SUPERSECRET" not in str(error)

@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional, Sequence
 
-from .http import HttpError, build_url, request_json
+from .http import HttpError, build_url, redact, request_json
 from .util import parse_timestamp
 
 log = logging.getLogger(__name__)
@@ -284,7 +284,7 @@ class OddsApiClient:
             )
         query = {"apiKey": self.api_key, **(params or {})}
         url = build_url(self.base_url, path, query)
-        log.debug("%s %s", method, url.replace(self.api_key, "***"))
+        log.debug("%s %s", method, redact(url))
         return request_json(url, method=method, timeout=self.timeout)
 
     # -- endpoints --------------------------------------------------------

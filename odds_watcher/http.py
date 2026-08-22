@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -16,9 +17,26 @@ USER_AGENT = "odds-watcher/1.0 (+https://github.com/loizos-stack/odds_watcher)"
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
-class HttpError(RuntimeError):
+_SECRET_PATTERNS = (
+    re.compile(r"(apiKey=)[^&\s]+", re.IGNORECASE),
+    re.compile(r"(/bot)[^/\s]+"),
+)
+
+
+def redact(text: str) -> str:
+    """Strip API keys and bot tokens so they never reach a log or an exception."""
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(r"\1***", text)
+    return text
+
+
+class TransportError(RuntimeError):
+    """Any failure while talking to a remote API (network, timeout, bad JSON)."""
+
+
+class HttpError(TransportError):
     def __init__(self, status: int, body: str, url: str):
-        super().__init__(f"HTTP {status} for {url}: {body[:400]}")
+        super().__init__(f"HTTP {status} for {redact(url)}: {body[:400]}")
         self.status = status
         self.body = body
         self.url = url
@@ -80,8 +98,15 @@ def request_json(
 
         if attempt < retries:
             delay = backoff ** attempt
-            log.warning("request failed (%s), retrying in %.0fs [%d/%d]", last_error, delay, attempt, retries)
+            log.warning(
+                "request failed (%s), retrying in %.0fs [%d/%d]",
+                redact(str(last_error)),
+                delay,
+                attempt,
+                retries,
+            )
             sleep(delay)
 
-    assert last_error is not None
-    raise last_error
+    if isinstance(last_error, TransportError):
+        raise last_error
+    raise TransportError(f"{redact(url)} unreachable after {retries} attempts: {last_error}")
