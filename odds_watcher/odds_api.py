@@ -143,14 +143,19 @@ def parse_event(raw: dict) -> Optional[Event]:
     )
 
 
-def _iter_outcomes(market_name: str, node: Any) -> Iterator[tuple[str, Any, dict]]:
-    """Yield ``(outcome_name, price, raw)`` triples from a market node."""
+# Keys inside an odds row that describe the row rather than name an outcome.
+_ROW_META_KEYS = {"hdp", "handicap", "line", "points", "label", "name", "updatedAt", "updated_at"}
+
+
+def _iter_outcomes(node: Any) -> Iterator[tuple[str, Any, dict]]:
+    """Yield ``(outcome_name, price, raw)`` from an outcomes collection."""
     if isinstance(node, list):
         for item in node:
             if isinstance(item, dict):
                 name = str(_first(item, "name", "outcome", "betSide", "side", "label", default="")).strip()
                 price = _first(item, "odds", "price", "value", "decimal", "decimalOdds")
-                yield name or market_name, price, item
+                if name:
+                    yield name, price, item
     elif isinstance(node, dict):
         for name, value in node.items():
             if isinstance(value, dict):
@@ -160,7 +165,53 @@ def _iter_outcomes(market_name: str, node: Any) -> Iterator[tuple[str, Any, dict
                 yield str(name), value, {}
 
 
+def _iter_market_prices(market_node: dict) -> Iterator[tuple[str, str, Any, dict]]:
+    """Yield ``(line, outcome, price, raw)`` for every price in one market.
+
+    Three layouts are supported, in priority order:
+
+    1. ``odds`` as a list of rows — the live odds-api.io shape. Each row is one
+       line of the market: ``{"hdp": -1.25, "home": "2.000", "away": "1.800"}``,
+       or a labelled single price ``{"label": "Home / Home", "odds": "2.200"}``.
+       Several rows mean several handicaps of the same market.
+    2. An explicit ``outcomes`` / ``selections`` / ``runners`` collection.
+    3. Prices hanging directly off the market node.
+    """
+    base_line = _first(market_node, "marketLine", "line", "hdp", "handicap", "points", default="")
+    base_line = "" if base_line in (None, "") else str(base_line)
+
+    rows = market_node.get("odds")
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            raw_line = _first(row, "hdp", "handicap", "line", "points", default=base_line)
+            line = "" if raw_line in (None, "") else str(raw_line)
+            label = _first(row, "label", "name", default=None)
+            if label is not None and "odds" in row:
+                # A single labelled price, e.g. Half Time / Full Time.
+                yield line, str(label), row["odds"], row
+                continue
+            for key, value in row.items():
+                if key in _ROW_META_KEYS:
+                    continue
+                if isinstance(value, (int, float, str)):
+                    yield line, str(key), value, row
+        return
+
+    outcomes = _first(market_node, "outcomes", "selections", "runners", "prices", default=None)
+    if outcomes is not None:
+        for name, price, raw in _iter_outcomes(outcomes):
+            yield base_line, name, price, raw
+        return
+
+    leftovers = {k: v for k, v in market_node.items() if k not in _MARKET_META_KEYS}
+    for name, price, raw in _iter_outcomes(leftovers):
+        yield base_line, name, price, raw
+
+
 def _to_float(value: Any) -> Optional[float]:
+    """Decimal odds as a float. Prices arrive as strings ("1.420") in places."""
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -216,21 +267,10 @@ def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> lis
 
         for hint, markets in _bookmaker_sections(block):
             for market_name, market_node in _market_nodes(markets):
-                line_raw = _first(
-                    market_node, "marketLine", "line", "hdp", "handicap", "points", default=""
+                market_ts = parse_timestamp(
+                    _first(market_node, "updatedAt", "updated_at", "timestamp", default=None)
                 )
-                line = "" if line_raw in (None, "") else str(line_raw)
-                outcomes = _first(
-                    market_node, "outcomes", "selections", "runners", "prices", default=None
-                )
-                if outcomes is None:
-                    # Some shapes hang the prices straight off the market node.
-                    outcomes = {
-                        k: v
-                        for k, v in market_node.items()
-                        if k not in _MARKET_META_KEYS
-                    }
-                for outcome_name, price, raw in _iter_outcomes(str(market_name), outcomes):
+                for line, outcome_name, price, raw in _iter_market_prices(market_node):
                     odds = _to_float(price)
                     if odds is None:
                         continue
@@ -250,7 +290,8 @@ def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> lis
                         odds=odds,
                         updated_ts=parse_timestamp(
                             _first(raw, "timestamp", "updatedAt", "lastUpdate", default=None)
-                        ),
+                        )
+                        or market_ts,
                     )
                     if quote.key in seen:
                         continue

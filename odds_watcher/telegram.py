@@ -62,6 +62,29 @@ def _esc(value: object) -> str:
     return html.escape(str(value), quote=False)
 
 
+# The API names moneyline-style outcomes by side, not by team.
+_SIDE_ALIASES = {
+    "home": "home",
+    "1": "home",
+    "away": "away",
+    "2": "away",
+    "draw": "draw",
+    "x": "draw",
+}
+
+
+def outcome_label(quote, event) -> str:
+    """Readable outcome: the team's name rather than "home"/"away"."""
+    side = _SIDE_ALIASES.get(quote.outcome.strip().lower())
+    if side == "home":
+        return event.home
+    if side == "away":
+        return event.away
+    if side == "draw":
+        return "Draw"
+    return quote.outcome
+
+
 def format_alert(alert: Alert) -> str:
     """Render one drop as a Telegram HTML message."""
     quote = alert.quote
@@ -75,11 +98,12 @@ def format_alert(alert: Alert) -> str:
     context = " · ".join(part for part in (event.sport, event.league) if part)
     if context:
         lines.append(_esc(context))
+    market = " ".join(part for part in (quote.market, quote.line) if part)
     lines += [
         f"Kick-off in <b>{format_countdown(alert.seconds_to_start)}</b> "
         f"({_esc(format_clock(event.start_ts))})",
         "",
-        f"Market: <b>{_esc(quote.label)}</b>",
+        f"Market: <b>{_esc(market)}</b> — <b>{_esc(outcome_label(quote, event))}</b>",
         f"Odds: <s>{alert.reference_odds:.2f}</s> → <b>{quote.odds:.2f}</b> "
         f"(<b>-{alert.drop_pct:.1f}%</b>)",
     ]

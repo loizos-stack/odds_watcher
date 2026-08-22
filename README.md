@@ -154,7 +154,7 @@ Every setting is an environment variable, documented in
 | `BOOKMAKERS` | `bet365,betano` | Books to watch (free tier allows 2) |
 | `SPORTS` | `football` | Comma-separated sports to follow |
 | `LEAGUES` | *(all)* | Restrict to specific league slugs |
-| `MARKETS` | *(all)* | e.g. `moneyline,spreads` |
+| `MARKETS` | *(all)* | e.g. `ML` for match result; substring match |
 | `WINDOW_START_SECONDS` | `600` | Window opens 10 min before kick-off |
 | `WINDOW_END_SECONDS` | `0` | Window closes at kick-off |
 | `BASELINE_LEAD_SECONDS` | `900` | Start recording prices 15 min out |
@@ -184,6 +184,24 @@ tests/          72 unit tests, no network access required
 pip install -r requirements.txt
 python -m pytest -q
 ```
+
+## The odds payload
+
+`/odds` returns markets as a list per bookmaker, with prices in an `odds` array
+of rows — the handicap on the row, prices as strings:
+
+```json
+"bookmakers": {
+  "Bet365": [
+    {"name": "ML",     "updatedAt": "...", "odds": [{"home": "1.420", "draw": "3.900", "away": "6.500"}]},
+    {"name": "Spread", "updatedAt": "...", "odds": [{"hdp": -1.25, "home": "2.000", "away": "1.800"}]}
+  ]
+}
+```
+
+Each row is one line of the market, so two rows of `Alternative Asian Handicap`
+are tracked as separate lines rather than colliding. A captured response lives in
+`tests/fixtures/live_odds_response.json` and is asserted against directly.
 
 ## Notes
 

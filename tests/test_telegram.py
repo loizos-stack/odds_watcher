@@ -32,6 +32,24 @@ def test_format_alert_contains_the_essentials():
     assert "2.00" in text and "1.80" in text and "-10.0%" in text
 
 
+def test_alert_names_the_team_not_the_side():
+    """The API says "home"; a phone notification should say who that is."""
+    home = format_alert(alert(quote=Quote("e1", "bet365", "ML", "", "home", 1.42)))
+    assert "Ajax &lt;A&gt;" in home.split("Market:")[1]
+
+    away = format_alert(alert(quote=Quote("e1", "bet365", "ML", "", "away", 6.5)))
+    assert "PSV" in away.split("Market:")[1]
+
+    draw = format_alert(alert(quote=Quote("e1", "bet365", "ML", "", "draw", 3.9)))
+    assert "Draw" in draw.split("Market:")[1]
+
+
+def test_alert_keeps_the_handicap_line_and_named_outcomes():
+    text = format_alert(alert(quote=Quote("e1", "bet365", "Totals", "2.5", "over", 1.95)))
+    assert "Totals 2.5" in text
+    assert "over" in text
+
+
 def test_repeat_alerts_are_labelled():
     assert "continuing" in format_alert(alert(repeat=True))
 

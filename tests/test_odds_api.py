@@ -254,3 +254,63 @@ def test_get_leagues_parsing(monkeypatch):
     rows = OddsApiClient("secret").get_leagues("football")
     assert ("eng-premier-league", "Premier League") in rows
     assert ("esp-laliga", "esp-laliga") in rows
+
+
+def _live_payload():
+    import json
+    from pathlib import Path
+
+    return json.loads(
+        (Path(__file__).parent / "fixtures" / "live_odds_response.json").read_text(encoding="utf-8")
+    )
+
+
+def test_live_payload_parses_every_price():
+    """Captured from the real API: markets are a list per book, prices in `odds` rows."""
+    quotes = parse_quotes(_live_payload())
+    assert len(quotes) == 32
+    assert {q.bookmaker for q in quotes} == {"bet365", "betano"}
+
+
+def test_live_payload_moneyline():
+    by_key = {(q.bookmaker, q.market, q.outcome): q.odds for q in parse_quotes(_live_payload())}
+    assert by_key[("bet365", "ML", "home")] == 1.42
+    assert by_key[("bet365", "ML", "draw")] == 3.90
+    assert by_key[("bet365", "ML", "away")] == 6.50
+    assert by_key[("betano", "ML", "home")] == 1.45
+
+
+def test_live_payload_keeps_handicap_lines_apart():
+    """Two rows of the same market are different lines, not a collision."""
+    asian = {
+        (q.line, q.outcome): q.odds
+        for q in parse_quotes(_live_payload())
+        if q.market == "Alternative Asian Handicap"
+    }
+    assert asian[("-1.0", "home")] == 1.75
+    assert asian[("-1.5", "home")] == 2.10
+    assert asian[("-1.0", "away")] == 2.05
+
+    spread = [q for q in parse_quotes(_live_payload()) if q.market == "Spread"]
+    assert {q.line for q in spread} == {"-1.25"}
+
+
+def test_live_payload_labelled_prices():
+    htft = {q.outcome: q.odds for q in parse_quotes(_live_payload()) if q.market == "Half Time / Full Time"}
+    assert htft["Home / Home"] == 2.20
+    assert htft["Away / Away"] == 11.00
+
+
+def test_live_payload_row_metadata_is_not_an_outcome():
+    """hdp/updatedAt describe the row; they must never become priced outcomes."""
+    outcomes = {q.outcome for q in parse_quotes(_live_payload())}
+    assert not outcomes & {"hdp", "updatedAt", "label", "name"}
+
+
+def test_live_payload_reads_the_market_timestamp():
+    ml = [q for q in parse_quotes(_live_payload()) if q.market == "ML" and q.bookmaker == "bet365"]
+    assert ml[0].updated_ts == parse_timestamp("2026-08-22T20:54:40.296Z")
+
+
+def test_live_payload_event_id_is_stable():
+    assert {q.event_id for q in parse_quotes(_live_payload())} == {"73895004"}

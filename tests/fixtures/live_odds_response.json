@@ -1,0 +1,46 @@
+{
+  "id": 73895004,
+  "home": "Deportivo Lara",
+  "away": "Academia Puerto Cabello B",
+  "homeId": 7746,
+  "awayId": 566613,
+  "date": "2026-08-22T21:00:00Z",
+  "status": "pending",
+  "sport": {"name": "Football", "slug": "football"},
+  "league": {"name": "Venezuela - Segunda Division, Central-West", "slug": "venezuela-segunda-division-central-west"},
+  "urls": {"Bet365": "https://www.bet365.com/#/AC/B1/", "Betano": "https://www.betano.de/match-odds/x/91131942/"},
+  "bookmakerIds": {"Bet365": "199949864", "Bet365_4": "199949864-bot365", "Betano": "91131942"},
+  "bookmakers": {
+    "Bet365": [
+      {"name": "ML", "updatedAt": "2026-08-22T20:54:40.296Z",
+       "odds": [{"home": "1.420", "draw": "3.900", "away": "6.500"}]},
+      {"name": "Draw No Bet", "updatedAt": "2026-08-21T19:24:39.416Z",
+       "odds": [{"home": "1.142", "away": "5.000"}]},
+      {"name": "Double Chance", "updatedAt": "2026-08-22T01:37:27.34Z",
+       "odds": [{"1X": "1.071", "12": "1.181", "X2": "2.600"}]},
+      {"name": "Spread", "updatedAt": "2026-08-22T10:31:41.275Z",
+       "odds": [{"hdp": -1.25, "home": "2.000", "away": "1.800"}]},
+      {"name": "Totals", "updatedAt": "2026-08-21T19:44:27.162Z",
+       "odds": [{"hdp": 2.5, "over": "1.975", "under": "1.825"}]},
+      {"name": "First Team To Score", "updatedAt": "2026-08-22T10:31:41.275Z",
+       "odds": [{"home": "1.400", "away": "3.400", "none": "9.000"}]},
+      {"name": "Odd/Even", "updatedAt": "2026-08-22T16:47:06.936Z",
+       "odds": [{"odd": "1.975", "even": "1.875"}]},
+      {"name": "ML HT", "updatedAt": "2026-08-22T20:54:40.296Z",
+       "odds": [{"home": "1.952", "draw": "2.250", "away": "6.500"}]},
+      {"name": "Half Time / Full Time", "updatedAt": "2026-08-22T01:44:27.957Z",
+       "odds": [{"label": "Home / Home", "odds": "2.200"},
+                {"label": "Home / Draw", "odds": "19.000"},
+                {"label": "Away / Away", "odds": "11.000"}]},
+      {"name": "Alternative Asian Handicap", "updatedAt": "2026-08-22T10:31:41.275Z",
+       "odds": [{"hdp": -1.0, "home": "1.750", "away": "2.050"},
+                {"hdp": -1.5, "home": "2.100", "away": "1.720"}]}
+    ],
+    "Betano": [
+      {"name": "ML", "updatedAt": "2026-08-22T20:53:11.000Z",
+       "odds": [{"home": "1.450", "draw": "3.850", "away": "6.250"}]},
+      {"name": "Totals", "updatedAt": "2026-08-22T20:53:11.000Z",
+       "odds": [{"hdp": 2.5, "over": "1.950", "under": "1.850"}]}
+    ]
+  }
+}
