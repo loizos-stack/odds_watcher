@@ -68,3 +68,55 @@ def test_budget_daily_cap(store):
     assert budget.try_consume() is False
     clock["now"] += 86_401
     assert budget.try_consume() is True
+
+
+def test_records_are_batched_not_committed_per_row(tmp_path):
+    """One fsync per price would make a full-market poll take minutes.
+
+    Covers insert *and* both update paths: a poll inside the window only ever
+    takes the update branch, which is where a stray commit hides.
+    """
+    import sqlite3
+
+    path = tmp_path / "batch.db"
+    store = Store(path)
+    other = sqlite3.connect(str(path))
+
+    def visible_odds():
+        row = other.execute("SELECT last_odds FROM line_state").fetchone()
+        return row[0] if row else None
+
+    store.record(quote(2.00), pre_window=True, event_start=1000, ts=1)
+    assert visible_odds() is None  # insert not committed
+    store.commit()
+    assert visible_odds() == 2.00
+
+    store.record(quote(1.90), pre_window=True, event_start=1000, ts=2)
+    assert visible_odds() == 2.00  # pre-window update not committed
+    store.record(quote(1.80), pre_window=False, event_start=1000, ts=3)
+    assert visible_odds() == 2.00  # in-window update not committed either
+    store.commit()
+    assert visible_odds() == 1.80
+
+    other.close()
+    store.close()
+
+
+def test_record_accepts_a_prefetched_row(tmp_path):
+    """The detector already holds the row; re-reading it doubles the SELECTs."""
+    store = Store(tmp_path / "prefetch.db")
+    store.record(quote(2.00), pre_window=True, event_start=1000, ts=1)
+    state = store.get_state(quote())
+
+    store.record(quote(1.80), pre_window=False, event_start=1000, ts=2, existing=state)
+    assert store.get_state(quote()).last_odds == 1.80
+    assert store.get_state(quote()).baseline_odds == 2.00
+    store.close()
+
+
+def test_closing_flushes_pending_writes(tmp_path):
+    path = tmp_path / "flush.db"
+    with Store(path) as store:
+        store.record(quote(2.20), pre_window=True, event_start=1000, ts=1)
+    with Store(path) as reopened:
+        assert reopened.get_state(quote()).baseline_odds == 2.20

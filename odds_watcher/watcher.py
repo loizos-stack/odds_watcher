@@ -119,10 +119,36 @@ class Watcher:
             alerts.extend(self.detector.process(event, quotes, now))
 
         if alerts:
-            self.dispatch(alerts, now)
+            self.dispatch(self.rank_and_cap(alerts), now)
 
         self.store.purge(now - STATE_RETENTION_SECONDS)
         return alerts
+
+    def rank_and_cap(self, alerts: list[Alert]) -> list[Alert]:
+        """Biggest drops first, capped at MAX_ALERTS_PER_POLL.
+
+        Watching every market and player prop can surface hundreds of drops in
+        one poll. Sending them all would bury the ones that matter and hit
+        Telegram's per-chat rate limit, so the sharpest moves win and the rest
+        are logged.
+        """
+        ranked = sorted(alerts, key=lambda alert: alert.drop_pct, reverse=True)
+        cap = self.config.max_alerts_per_poll
+        if len(ranked) > cap:
+            log.warning(
+                "%d drops found, sending the %d largest (raise MIN_DROP_PCT to see fewer)",
+                len(ranked),
+                cap,
+            )
+            for alert in ranked[cap:]:
+                log.info(
+                    "not sent: %s %s %s -%.1f%%",
+                    alert.event.name,
+                    alert.quote.bookmaker,
+                    alert.quote.label,
+                    alert.drop_pct,
+                )
+        return ranked[:cap]
 
     def dispatch(self, alerts: list[Alert], now: float) -> None:
         """Send alerts to Telegram, marking each one only once it is delivered."""
@@ -134,6 +160,7 @@ class Watcher:
                 continue
             for alert in group:
                 self.store.mark_alerted(alert.quote, ts=now)
+        self.store.commit()
 
     # -- loop -------------------------------------------------------------
     def seconds_until_next_poll(self, now: float) -> int:

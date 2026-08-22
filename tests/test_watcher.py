@@ -301,3 +301,49 @@ def test_discovery_sampling_spans_the_whole_horizon(config):
     spread = cli._upcoming(Feed(), config, now, 10, spread=True)
     assert {e.league for e in spread} == {"Lower", "Major"}
     assert len(spread) == 10
+
+
+def test_alerts_are_ranked_and_capped(config, store):
+    """A prop-heavy poll must send the sharpest moves, not the first twenty."""
+    import dataclasses
+
+    from odds_watcher.detector import Alert
+
+    cfg = dataclasses.replace(config, max_alerts_per_poll=3)
+    watcher, _api, _tg = make(cfg, store, [[]])
+
+    alerts = [
+        Alert(event=EVENT, quote=quote(2.0), reference_odds=2.0, drop_pct=pct, seconds_to_start=300)
+        for pct in (5.1, 22.0, 8.0, 13.5, 6.0)
+    ]
+    capped = watcher.rank_and_cap(alerts)
+    assert [a.drop_pct for a in capped] == [22.0, 13.5, 8.0]
+
+
+def test_cap_is_a_no_op_below_the_limit(config, store):
+    from odds_watcher.detector import Alert
+
+    watcher, _api, _tg = make(config, store, [[]])
+    alerts = [
+        Alert(event=EVENT, quote=quote(2.0), reference_odds=2.0, drop_pct=7.0, seconds_to_start=300)
+    ]
+    assert watcher.rank_and_cap(alerts) == alerts
+
+
+def test_uncapped_alerts_are_not_marked_as_sent(config, store):
+    """Only delivered alerts get marked, so a suppressed drop can alert later."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, max_alerts_per_poll=1)
+    watcher, _api, telegram = make(
+        cfg, store, [[quote(2.00), quote(2.00, bookmaker="betano")],
+                     [quote(1.50), quote(1.80, bookmaker="betano")]]
+    )
+    watcher.poll_once(at(20))
+    watcher.poll_once(at(5))
+
+    # bet365 dropped 25%, betano 10% — only the larger is sent and marked.
+    assert len(telegram.sent) == 1
+    assert "BET365" in telegram.sent[0]
+    assert store.get_state(quote(1.50)).alert_count == 1
+    assert store.get_state(quote(1.80, bookmaker="betano")).alert_count == 0

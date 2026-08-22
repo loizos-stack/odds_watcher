@@ -88,7 +88,7 @@ class Config:
 
     # --- what to watch ---------------------------------------------------
     bookmakers: tuple[str, ...] = DEFAULT_BOOKMAKERS
-    sports: tuple[str, ...] = ("football",)
+    sports: tuple[str, ...] = ("baseball",)
     leagues: tuple[str, ...] = ()
     markets: tuple[str, ...] = ()  # empty == every market the API returns
     outcomes: tuple[str, ...] = ()  # empty == every outcome, e.g. ("over", "under")
@@ -106,6 +106,11 @@ class Config:
     min_drop_pct: float = 5.0
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
+    # Ceiling on messages from one poll. With every market and player prop
+    # enabled a single poll can find hundreds of drops; the biggest are sent
+    # and the rest are logged, so a busy minute cannot flood the chat or trip
+    # Telegram's own rate limits.
+    max_alerts_per_poll: int = 20
 
     # --- polling / budget ------------------------------------------------
     poll_interval_seconds: int = 60
@@ -178,7 +183,7 @@ class Config:
             telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN", "").strip(),
             telegram_chat_id=env.get("TELEGRAM_CHAT_ID", "").strip(),
             bookmakers=bookmakers,
-            sports=_csv(env.get("SPORTS", "football")) or ("football",),
+            sports=_csv(env.get("SPORTS", "baseball")) or ("baseball",),
             leagues=_csv(env.get("LEAGUES", "")),
             markets=_csv(env.get("MARKETS", "")),
             outcomes=_csv(env.get("OUTCOMES", "")),
@@ -187,6 +192,7 @@ class Config:
             baseline_lead_seconds=baseline_lead,
             min_drop_pct=_get_float(env, "MIN_DROP_PCT", 5.0, minimum=0.1),
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
+            max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
             poll_interval_seconds=poll_interval,
             idle_poll_interval_seconds=_get_int(env, "IDLE_POLL_INTERVAL_SECONDS", 300, minimum=10),
             events_refresh_seconds=_get_int(env, "EVENTS_REFRESH_SECONDS", 900, minimum=60),

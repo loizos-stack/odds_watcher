@@ -154,14 +154,15 @@ Every setting is an environment variable, documented in
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `BOOKMAKERS` | `Bet365,DraftKings` | Books to watch (free tier allows 2) |
-| `SPORTS` | `football` | Comma-separated sports to follow |
+| `SPORTS` | `baseball` | Comma-separated sports to follow |
 | `LEAGUES` | *(all)* | Restrict to specific league slugs |
-| `MARKETS` | *(all)* | e.g. `Totals,Corner,-HT`; substring, `-` excludes |
+| `MARKETS` | *(all)* | e.g. `Totals,-F5`; substring, `-` excludes |
 | `OUTCOMES` | *(all)* | e.g. `over,under` to watch totals only |
 | `WINDOW_START_SECONDS` | `600` | Window opens 10 min before kick-off |
 | `WINDOW_END_SECONDS` | `0` | Window closes at kick-off |
 | `BASELINE_LEAD_SECONDS` | `900` | Start recording prices 15 min out |
 | `MIN_DROP_PCT` | `5.0` | Minimum shortening to alert on |
+| `MAX_ALERTS_PER_POLL` | `20` | Largest drops win when a poll finds many |
 | `POLL_INTERVAL_SECONDS` | `60` | Poll cadence while fixtures are close |
 | `MAX_REQUESTS_PER_HOUR` | `90` | Local cap below the free tier's 100 |
 
@@ -187,6 +188,22 @@ tests/          72 unit tests, no network access required
 pip install -r requirements.txt
 python -m pytest -q
 ```
+
+## Watching everything, including player props
+
+`MARKETS=` and `OUTCOMES=` empty means every market the API returns, player
+props included. That is tens of thousands of prices per poll on a full slate,
+so two things matter:
+
+* **Writes are batched.** A poll commits once per fixture, not once per price.
+  A 15-game MLB slate with full props (~40k prices) takes about 0.7s; with a
+  commit per price the same poll took 29s.
+* **Alerts are ranked and capped.** `MAX_ALERTS_PER_POLL` (default 20) keeps
+  the largest drops and logs the rest, so a busy minute cannot flood the chat
+  or trip Telegram's per-chat rate limit.
+
+Props move faster and further than game lines, so expect `MIN_DROP_PCT` to need
+raising once you see real volume — calibrate with `run --dry-run`.
 
 ## Coverage comes first
 

@@ -108,7 +108,13 @@ class DropDetector:
                 continue
 
             state = self.store.get_state(quote)
-            self.store.record(quote, pre_window=pre_window, event_start=event.start_ts, ts=now)
+            self.store.record(
+                quote,
+                pre_window=pre_window,
+                event_start=event.start_ts,
+                ts=now,
+                existing=state,
+            )
 
             if not in_window or state is None or not state.baseline_pre_window:
                 continue
@@ -138,4 +144,7 @@ class DropDetector:
                 change,
             )
 
+        # One commit for the whole fixture rather than one per price: with all
+        # markets and player props enabled this is thousands of rows a poll.
+        self.store.commit()
         return alerts

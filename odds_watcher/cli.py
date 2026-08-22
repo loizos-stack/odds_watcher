@@ -32,6 +32,7 @@ log = logging.getLogger("odds_watcher")
 REQUIRED_CREDENTIALS = {
     "chat-id": ("TELEGRAM_BOT_TOKEN",),
     "bookmakers": ("ODDS_API_KEY",),
+    "sports": ("ODDS_API_KEY",),
     "leagues": ("ODDS_API_KEY",),
     "probe": ("ODDS_API_KEY",),
     "markets": ("ODDS_API_KEY",),
@@ -50,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "leagues", "markets", "probe", "coverage", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "probe", "coverage", "chat-id", "status"],
     )
     parser.add_argument(
         "--search",
@@ -188,6 +189,33 @@ def cmd_bookmakers(config: Config, search: Optional[str] = None) -> int:
         print(f"{identifier.ljust(width)}  {label}")
     print(f"\n{len(rows)} bookmaker(s). Put the left-hand identifiers in BOOKMAKERS in your .env.")
     return 0
+
+
+def _print_rows(rows: list, noun: str, setting: str, search: Optional[str]) -> int:
+    if search:
+        needle = search.lower()
+        rows = [row for row in rows if needle in row[0].lower() or needle in row[1].lower()]
+    if not rows:
+        print(f"no {noun} matching {search!r}", file=sys.stderr)
+        return 1
+    width = max(len(identifier) for identifier, _ in rows)
+    for identifier, label in rows:
+        print(f"{identifier.ljust(width)}  {label}")
+    print(f"\n{len(rows)} {noun}. Put the left-hand identifiers in {setting} in your .env.")
+    return 0
+
+
+def cmd_sports(config: Config, search: Optional[str] = None) -> int:
+    """List the sport identifiers the API recognises, for SPORTS."""
+    store, _, api, _ = _components(config)
+    try:
+        rows = api.get_sports()
+    except TransportError as exc:
+        print(f"✗ could not list sports: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+    return _print_rows(rows, "sport(s)", "SPORTS", search)
 
 
 def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
@@ -585,6 +613,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_select_bookmakers(config)
     if args.command == "bookmakers":
         return cmd_bookmakers(config, args.search)
+    if args.command == "sports":
+        return cmd_sports(config, args.search)
     if args.command == "leagues":
         return cmd_leagues(config, args.search)
     if args.command == "probe":

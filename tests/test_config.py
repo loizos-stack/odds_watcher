@@ -8,6 +8,7 @@ BASE = {"ODDS_API_KEY": "k", "TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}
 def test_defaults_match_the_stated_rule():
     config = Config.from_env(BASE)
     assert config.bookmakers == ("Bet365", "DraftKings")
+    assert config.sports == ("baseball",)
     assert (config.window_end_seconds, config.window_start_seconds) == (0, 600)
     assert config.alert_window_label == "0-10 min before kick-off"
 

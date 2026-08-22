@@ -408,20 +408,29 @@ class OddsApiClient:
             quotes.extend(self.get_event_odds(event_id, bookmakers))
         return quotes
 
-    def get_leagues(self, sport: str) -> list[tuple[str, str]]:
-        """Leagues for a sport, as ``(identifier, display name)`` for LEAGUES."""
-        payload = self._call("leagues", {"sport": sport})
+    @staticmethod
+    def _identifier_rows(payload: Any, id_keys: Sequence[str]) -> list[tuple[str, str]]:
+        """``(identifier, display name)`` pairs from a listing endpoint."""
         rows: list[tuple[str, str]] = []
         for item in _as_list(payload):
             if isinstance(item, str):
                 rows.append((item, item))
             elif isinstance(item, dict):
-                identifier = _first(item, "slug", "id", "key", "league", "name", default=None)
+                identifier = _first(item, *id_keys, default=None)
                 if identifier is None:
                     continue
                 label = str(_first(item, "name", "title", "slug", default=identifier))
                 rows.append((str(identifier), label))
         return sorted(set(rows))
+
+    def get_sports(self) -> list[tuple[str, str]]:
+        """Sports the API covers, as ``(identifier, display name)`` for SPORTS."""
+        return self._identifier_rows(self._call("sports"), ("slug", "id", "key", "sport", "name"))
+
+    def get_leagues(self, sport: str) -> list[tuple[str, str]]:
+        """Leagues for a sport, as ``(identifier, display name)`` for LEAGUES."""
+        payload = self._call("leagues", {"sport": sport})
+        return self._identifier_rows(payload, ("slug", "id", "key", "league", "name"))
 
     def get_bookmakers(self) -> list[tuple[str, str]]:
         """All bookmakers the API knows, as ``(identifier, display name)``.
@@ -430,17 +439,7 @@ class OddsApiClient:
         not always the obvious lowercase name — hence this listing.
         """
         payload = self._call("bookmakers")
-        rows: list[tuple[str, str]] = []
-        for item in _as_list(payload):
-            if isinstance(item, str):
-                rows.append((item, item))
-            elif isinstance(item, dict):
-                identifier = _first(item, "id", "slug", "key", "bookmaker", "name", default=None)
-                if identifier is None:
-                    continue
-                label = str(_first(item, "name", "title", "slug", default=identifier))
-                rows.append((str(identifier), label))
-        return sorted(set(rows))
+        return self._identifier_rows(payload, ("id", "slug", "key", "bookmaker", "name"))
 
     def get_odds_payloads(
         self, event_ids: Sequence[str], bookmakers: Sequence[str], *, fallback_limit: int = 5

@@ -90,8 +90,22 @@ class Store:
         self.conn.executescript(SCHEMA)
         self.conn.commit()
 
+    def commit(self) -> None:
+        """Flush pending writes.
+
+        Recording a price does not commit on its own: with every market and
+        player prop enabled a single poll writes thousands of rows, and one
+        fsync per row makes a poll take minutes. Callers commit once when the
+        poll is done instead.
+        """
+        self.conn.commit()
+
     def close(self) -> None:
-        self.conn.close()
+        """Flush and close. Closing must never silently drop pending writes."""
+        try:
+            self.conn.commit()
+        finally:
+            self.conn.close()
 
     def __enter__(self) -> "Store":
         return self
@@ -108,16 +122,29 @@ class Store:
         ).fetchone()
         return LineState(row) if row else None
 
-    def record(self, quote: Quote, *, pre_window: bool, event_start: float, ts: Optional[float] = None) -> None:
+    def record(
+        self,
+        quote: Quote,
+        *,
+        pre_window: bool,
+        event_start: float,
+        ts: Optional[float] = None,
+        existing: Optional[LineState] = None,
+    ) -> None:
         """Insert or update the stored price for a quote.
 
         While the event is still outside the alert window the baseline tracks
         the newest price, so the baseline ends up being the last price seen
         *before* the window opened. Once inside the window the baseline is
         frozen and only ``last_odds`` moves.
+
+        Callers that already looked the row up pass it as ``existing`` to skip
+        a second SELECT — worth it when a poll handles tens of thousands of
+        prices. Writes are not committed here; call :meth:`commit`.
         """
         ts = now_ts() if ts is None else ts
-        existing = self.get_state(quote)
+        if existing is None:
+            existing = self.get_state(quote)
         if existing is None:
             self.conn.execute(
                 """INSERT INTO line_state
@@ -126,7 +153,9 @@ class Store:
                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (*quote.key, quote.odds, ts, int(pre_window), quote.odds, ts, event_start),
             )
-        elif pre_window:
+            return
+
+        if pre_window:
             self.conn.execute(
                 """UPDATE line_state
                    SET baseline_odds=?, baseline_ts=?, baseline_pre_window=1,
@@ -140,7 +169,6 @@ class Store:
                    WHERE event_id=? AND bookmaker=? AND market=? AND line=? AND outcome=?""",
                 (quote.odds, ts, event_start, *quote.key),
             )
-        self.conn.commit()
 
     def mark_alerted(self, quote: Quote, ts: Optional[float] = None) -> None:
         ts = now_ts() if ts is None else ts
