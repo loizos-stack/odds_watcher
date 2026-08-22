@@ -299,8 +299,12 @@ class OddsApiClient:
         events = [parse_event(raw) for raw in _as_list(payload)]
         return [event for event in events if event is not None]
 
+    def get_event_odds_raw(self, event_id: str, bookmakers: Sequence[str]) -> Any:
+        """The undecoded /odds payload, for diagnostics."""
+        return self._call("odds", {"eventId": event_id, "bookmakers": ",".join(bookmakers)})
+
     def get_event_odds(self, event_id: str, bookmakers: Sequence[str]) -> list[Quote]:
-        payload = self._call("odds", {"eventId": event_id, "bookmakers": ",".join(bookmakers)})
+        payload = self.get_event_odds_raw(event_id, bookmakers)
         return parse_quotes(payload, default_event_id=event_id)
 
     def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> list[Quote]:
@@ -332,6 +336,21 @@ class OddsApiClient:
             quotes.extend(self.get_event_odds(event_id, bookmakers))
         return quotes
 
+    def get_leagues(self, sport: str) -> list[tuple[str, str]]:
+        """Leagues for a sport, as ``(identifier, display name)`` for LEAGUES."""
+        payload = self._call("leagues", {"sport": sport})
+        rows: list[tuple[str, str]] = []
+        for item in _as_list(payload):
+            if isinstance(item, str):
+                rows.append((item, item))
+            elif isinstance(item, dict):
+                identifier = _first(item, "slug", "id", "key", "league", "name", default=None)
+                if identifier is None:
+                    continue
+                label = str(_first(item, "name", "title", "slug", default=identifier))
+                rows.append((str(identifier), label))
+        return sorted(set(rows))
+
     def get_bookmakers(self) -> list[tuple[str, str]]:
         """All bookmakers the API knows, as ``(identifier, display name)``.
 
@@ -353,12 +372,20 @@ class OddsApiClient:
 
     def get_selected_bookmakers(self) -> list[str]:
         payload = self._call("bookmakers/selected")
+        if isinstance(payload, dict):
+            for key in ("selected", "bookmakers", "data", "result", "results"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    payload = value
+                    break
         names: list[str] = []
         for item in _as_list(payload):
             if isinstance(item, str):
                 names.append(item.lower())
             elif isinstance(item, dict):
-                name = _first(item, "name", "slug", "id", "bookmaker", default=None)
+                name = _first(item, "name", "slug", "id", "key", "bookmaker", "title", default=None)
+                if isinstance(name, dict):
+                    name = _first(name, "name", "slug", "id", default=None)
                 if name:
                     names.append(str(name).lower())
         return names

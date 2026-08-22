@@ -19,7 +19,7 @@ Odds: 2.00 → 1.80 (-10.0%)
 
 "Line drops 0–10 minutes before game time" is implemented as:
 
-1. From **45 minutes** before kick-off (`BASELINE_LEAD_SECONDS`) the bot records
+1. From **15 minutes** before kick-off (`BASELINE_LEAD_SECONDS`) the bot records
    every price bet365 and betano offer on each upcoming fixture.
 2. The price standing when the fixture crosses **T-10 minutes**
    (`WINDOW_START_SECONDS`) becomes the **baseline**.
@@ -81,6 +81,14 @@ python -m odds_watcher check               # sends a test message, lists fixture
 and whether that fits your hourly request budget — heed it, a wide slate will
 exhaust the free tier.
 
+If `check` shows no selected bookmakers or you are unsure the names are right,
+`probe` fetches the next fixture's odds and prints exactly which books
+answered, dumping the raw payload when nothing parses:
+
+```bash
+python -m odds_watcher probe
+```
+
 ### 4. Run
 
 ```bash
@@ -89,6 +97,8 @@ python -m odds_watcher run --dry-run       # detect and log, send nothing
 python -m odds_watcher once                # single poll (for cron)
 python -m odds_watcher status              # tracked lines + remaining budget
 python -m odds_watcher bookmakers          # valid bookmaker identifiers
+python -m odds_watcher leagues --search x  # valid league identifiers
+python -m odds_watcher probe               # show the prices actually returned
 ```
 
 There are no runtime dependencies — Python 3.9+ standard library only.
@@ -147,7 +157,7 @@ Every setting is an environment variable, documented in
 | `MARKETS` | *(all)* | e.g. `moneyline,spreads` |
 | `WINDOW_START_SECONDS` | `600` | Window opens 10 min before kick-off |
 | `WINDOW_END_SECONDS` | `0` | Window closes at kick-off |
-| `BASELINE_LEAD_SECONDS` | `2700` | Start recording prices 45 min out |
+| `BASELINE_LEAD_SECONDS` | `900` | Start recording prices 15 min out |
 | `MIN_DROP_PCT` | `5.0` | Minimum shortening to alert on |
 | `POLL_INTERVAL_SECONDS` | `60` | Poll cadence while fixtures are close |
 | `MAX_REQUESTS_PER_HOUR` | `90` | Local cap below the free tier's 100 |
@@ -163,8 +173,9 @@ odds_watcher/
   detector.py   the drop rule (pure logic, no I/O)
   telegram.py   Bot API client and message formatting
   watcher.py    polling loop and scheduling
-  cli.py        run / once / check / bookmakers / select-bookmakers / chat-id / status
-tests/          67 unit tests, no network access required
+  cli.py        run / once / check / probe / bookmakers / leagues /
+                select-bookmakers / chat-id / status
+tests/          72 unit tests, no network access required
 ```
 
 ## Tests

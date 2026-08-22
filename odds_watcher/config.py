@@ -98,8 +98,10 @@ class Config:
     window_start_seconds: int = 600
     window_end_seconds: int = 0
     # How long before kick-off we start recording prices, so that a baseline
-    # exists by the time an event enters the alert window.
-    baseline_lead_seconds: int = 2700
+    # exists by the time an event enters the alert window. This only needs to
+    # clear the window by a couple of polls — a longer lead spends the request
+    # budget on prices that are thrown away.
+    baseline_lead_seconds: int = 900
     min_drop_pct: float = 5.0
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
@@ -156,11 +158,18 @@ class Config:
                 "WINDOW_END_SECONDS must be smaller than WINDOW_START_SECONDS "
                 f"(got end={window_end}, start={window_start})"
             )
-        baseline_lead = _get_int(env, "BASELINE_LEAD_SECONDS", 2700, minimum=0)
-        if baseline_lead < window_start:
+        baseline_lead = _get_int(env, "BASELINE_LEAD_SECONDS", 900, minimum=0)
+        poll_interval = _get_int(env, "POLL_INTERVAL_SECONDS", 60, minimum=10)
+        # The lead has to clear the window by at least two polls, or a fixture
+        # can slip from "not tracked yet" straight into the window with no
+        # pre-window price — and a line with no baseline can never alert.
+        minimum_lead = window_start + 2 * poll_interval
+        if baseline_lead < minimum_lead:
             raise ConfigError(
-                "BASELINE_LEAD_SECONDS must be >= WINDOW_START_SECONDS, otherwise no "
-                "pre-window price is ever recorded to compare against"
+                f"BASELINE_LEAD_SECONDS ({baseline_lead}) must be at least "
+                f"WINDOW_START_SECONDS + 2 x POLL_INTERVAL_SECONDS ({minimum_lead}), "
+                "otherwise fixtures can enter the alert window with no baseline price "
+                "and will never alert"
             )
 
         return cls(
@@ -176,7 +185,7 @@ class Config:
             baseline_lead_seconds=baseline_lead,
             min_drop_pct=_get_float(env, "MIN_DROP_PCT", 5.0, minimum=0.1),
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
-            poll_interval_seconds=_get_int(env, "POLL_INTERVAL_SECONDS", 60, minimum=10),
+            poll_interval_seconds=poll_interval,
             idle_poll_interval_seconds=_get_int(env, "IDLE_POLL_INTERVAL_SECONDS", 300, minimum=10),
             events_refresh_seconds=_get_int(env, "EVENTS_REFRESH_SECONDS", 900, minimum=60),
             max_requests_per_hour=_get_int(env, "MAX_REQUESTS_PER_HOUR", 90, minimum=1),

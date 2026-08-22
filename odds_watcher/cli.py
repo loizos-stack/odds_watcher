@@ -32,6 +32,8 @@ log = logging.getLogger("odds_watcher")
 REQUIRED_CREDENTIALS = {
     "chat-id": ("TELEGRAM_BOT_TOKEN",),
     "bookmakers": ("ODDS_API_KEY",),
+    "leagues": ("ODDS_API_KEY",),
+    "probe": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -46,12 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "leagues", "probe", "chat-id", "status"],
     )
     parser.add_argument(
         "--search",
         default=None,
-        help="filter the `bookmakers` listing, e.g. --search bet",
+        help="filter the `bookmakers` / `leagues` listing, e.g. --search premier",
     )
     parser.add_argument("--env-file", default=".env", help="path to the .env file (default: .env)")
     parser.add_argument("--log-level", default=None, help="override LOG_LEVEL")
@@ -186,6 +188,33 @@ def cmd_bookmakers(config: Config, search: Optional[str] = None) -> int:
     return 0
 
 
+def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
+    """List league identifiers for the configured sports, for LEAGUES."""
+    store, _, api, _ = _components(config)
+    rows: list[tuple[str, str]] = []
+    try:
+        for sport in config.sports:
+            rows.extend(api.get_leagues(sport))
+    except TransportError as exc:
+        print(f"✗ could not list leagues: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+    rows = sorted(set(rows))
+    if search:
+        needle = search.lower()
+        rows = [row for row in rows if needle in row[0].lower() or needle in row[1].lower()]
+    if not rows:
+        print(f"no leagues matching {search!r}", file=sys.stderr)
+        return 1
+    width = max(len(identifier) for identifier, _ in rows)
+    for identifier, label in rows:
+        print(f"{identifier.ljust(width)}  {label}")
+    print(f"\n{len(rows)} league(s). Put the left-hand identifiers in LEAGUES in your .env.")
+    return 0
+
+
 def _suggest_bookmakers(api, wanted: tuple) -> None:
     """After a rejected selection, show identifiers that look like what was asked for."""
     try:
@@ -285,6 +314,65 @@ def cmd_status(config: Config) -> int:
     return 0
 
 
+def cmd_probe(config: Config) -> int:
+    """Fetch odds for the next fixture and show exactly what came back.
+
+    This is the diagnostic that answers the two questions `check` cannot: are
+    the configured bookmaker names the ones this account actually receives
+    prices for, and does the payload match what the parser expects. When
+    nothing parses, the raw response is printed so the shape can be read.
+    """
+    import json
+
+    from .odds_api import parse_quotes
+
+    store, _, api, _ = _components(config)
+    try:
+        now = now_ts()
+        events = api.get_events(config.sports[0])
+        upcoming = sorted(
+            (e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts
+        )
+        if not upcoming:
+            print("no upcoming fixtures to probe", file=sys.stderr)
+            return 1
+
+        event = upcoming[0]
+        print(f"probing: {event.name}  ({event.league or 'unknown league'})")
+        print(f"         kick-off {format_clock(event.start_ts)}, event id {event.id}")
+        print(f"         asking for bookmakers: {', '.join(config.bookmakers)}\n")
+
+        payload = api.get_event_odds_raw(event.id, config.bookmakers)
+        quotes = parse_quotes(payload, default_event_id=event.id)
+    except TransportError as exc:
+        print(f"✗ probe failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+    if not quotes:
+        print("✗ no prices parsed from the response. Raw payload below:\n")
+        print(json.dumps(payload, indent=2)[:4000])
+        return 1
+
+    by_book: dict = {}
+    for quote in quotes:
+        by_book.setdefault(quote.bookmaker, []).append(quote)
+    print(f"✓ parsed {len(quotes)} price(s) from {len(by_book)} bookmaker(s)")
+    for book, book_quotes in sorted(by_book.items()):
+        print(f"\n  {book} — {len(book_quotes)} price(s)")
+        for quote in book_quotes[:6]:
+            print(f"    {quote.label}: {quote.odds:.2f}")
+
+    wanted = {b.lower() for b in config.bookmakers}
+    missing = wanted - set(by_book)
+    if missing:
+        print(f"\n! no prices for: {', '.join(sorted(missing))}")
+        print("  Either the identifier is wrong (`bookmakers --search`) or this")
+        print("  fixture simply has no market at that book — try again on a bigger game.")
+    return 0
+
+
 def _report(alerts: list[Alert]) -> None:
     if not alerts:
         print("no drops detected in this poll")
@@ -317,6 +405,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_select_bookmakers(config)
     if args.command == "bookmakers":
         return cmd_bookmakers(config, args.search)
+    if args.command == "leagues":
+        return cmd_leagues(config, args.search)
+    if args.command == "probe":
+        return cmd_probe(config)
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "status":

@@ -105,3 +105,21 @@ def test_bookmakers_command_needs_only_the_api_key():
 
     assert REQUIRED_CREDENTIALS["bookmakers"] == ("ODDS_API_KEY",)
     assert Config.from_env({"ODDS_API_KEY": "k"}, required=("ODDS_API_KEY",)) is not None
+
+
+def test_baseline_lead_must_clear_the_window_by_two_polls():
+    """A lead that barely clears the window lets fixtures skip the baseline."""
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env({**BASE, "WINDOW_START_SECONDS": "600", "BASELINE_LEAD_SECONDS": "660",
+                         "POLL_INTERVAL_SECONDS": "60"})
+    assert "never alert" in str(exc.value)
+
+    ok = Config.from_env({**BASE, "WINDOW_START_SECONDS": "600", "BASELINE_LEAD_SECONDS": "720",
+                          "POLL_INTERVAL_SECONDS": "60"})
+    assert ok.baseline_lead_seconds == 720
+
+
+def test_default_lead_is_frugal_but_valid():
+    config = Config.from_env(BASE)
+    assert config.baseline_lead_seconds == 900
+    assert config.baseline_lead_seconds >= config.window_start_seconds + 2 * config.poll_interval_seconds

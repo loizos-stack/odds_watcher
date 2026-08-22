@@ -216,3 +216,41 @@ def test_get_bookmakers_handles_string_and_object_rows(monkeypatch):
     assert ("betano_pt", "Betano") in rows
     assert ("pinnacle", "pinnacle") in rows
     assert len(rows) == 3
+
+
+def test_selected_bookmakers_unwraps_wrapper_objects(monkeypatch):
+    """The account's selection has been seen wrapped under several keys."""
+    shapes = [
+        ["Bet365", "Betano"],
+        {"selected": ["Bet365", "Betano"]},
+        {"bookmakers": [{"name": "Bet365"}, {"name": "Betano"}]},
+        {"data": [{"bookmaker": {"name": "Bet365"}}, {"key": "Betano"}]},
+    ]
+    for shape in shapes:
+        monkeypatch.setattr("odds_watcher.odds_api.request_json", lambda url, _s=shape, **k: _s)
+        assert OddsApiClient("secret").get_selected_bookmakers() == ["bet365", "betano"], shape
+
+
+def test_event_odds_block_with_bookmakers_key_still_parses():
+    """Guard: 'bookmakers' must not be unwrapped as a container in odds payloads."""
+    quotes = parse_quotes(
+        {
+            "eventId": "1",
+            "bookmakers": ["Bet365", "Betano"],
+            "markets": [
+                {"market": "moneyline", "outcomes": [{"name": "Home", "odds": 2.0, "bookmaker": "Bet365"}]}
+            ],
+        }
+    )
+    assert len(quotes) == 1
+    assert quotes[0].bookmaker == "bet365"
+
+
+def test_get_leagues_parsing(monkeypatch):
+    monkeypatch.setattr(
+        "odds_watcher.odds_api.request_json",
+        lambda url, **k: [{"slug": "eng-premier-league", "name": "Premier League"}, "esp-laliga"],
+    )
+    rows = OddsApiClient("secret").get_leagues("football")
+    assert ("eng-premier-league", "Premier League") in rows
+    assert ("esp-laliga", "esp-laliga") in rows
