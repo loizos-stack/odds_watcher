@@ -474,8 +474,6 @@ def cmd_props(config: Config) -> int:
     That distinction decides the request budget entirely, so this fetches the
     same fixture both ways and compares what each returns.
     """
-    import math
-
     from .odds_api import market_catalogue
     from .watcher import EVENTS_PER_ODDS_REQUEST
 
@@ -516,39 +514,84 @@ def cmd_props(config: Config) -> int:
 
     only_single = sorted(set(single) - set(batched_markets))
     only_batched = sorted(set(batched_markets) - set(single))
-    if only_single:
-        print(f"\nonly in the per-fixture response ({len(only_single)}):")
-        for name in only_single[:25]:
+
+    def _listing(names: list, where: str) -> None:
+        print(f"\nonly in the {where} response ({len(names)}):")
+        for name in names[:25]:
             print(f"    {name}")
-        if len(only_single) > 25:
-            print(f"    ... and {len(only_single) - 25} more")
+        if len(names) > 25:
+            print(f"    ... and {len(names) - 25} more")
+
+    if only_single:
+        _listing(only_single, "per-fixture")
     if only_batched:
-        print(f"\nonly in the batched response ({len(only_batched)}): {', '.join(only_batched[:10])}")
+        _listing(only_batched, "batched")
 
     print()
-    if only_single:
+    if only_single and not only_batched:
         print("=> the per-fixture endpoint returns more. Set PER_EVENT_ODDS=true to")
         print("   collect these, at the cost of one request per fixture per poll.")
-        in_range = [
-            e for e in events
-            if config.window_end_seconds <= e.seconds_to_start(now) <= config.baseline_lead_seconds
-        ]
-        count = len(in_range) or len(events)
-        hourly = int(count * 3600 / config.poll_interval_seconds)
-        print(f"\n   with ~{count} fixture(s) in range that is ~{hourly} requests/hour")
-        if hourly > config.max_requests_per_hour:
-            needed = math.ceil(count * 3600 / config.max_requests_per_hour)
-            print(f"   — over your {config.max_requests_per_hour}/hour cap. It would fit only at")
-            print(f"     POLL_INTERVAL_SECONDS={needed}, which may be too slow for a "
-                  f"{config.window_start_seconds // 60}-minute window.")
-            print("     Narrowing LEAGUES to fewer simultaneous fixtures is the way out.")
+        _per_event_budget(config, events, now)
+    elif only_batched and not only_single:
+        print("=> the batched endpoint returns MORE than the per-fixture one, so there")
+        print("   is nothing to gain by requesting fixtures individually.")
+        print(f"   Keep PER_EVENT_ODDS=false ({EVENTS_PER_ODDS_REQUEST} fixtures per request).")
+    elif only_single and only_batched:
+        print("=> each endpoint returns markets the other does not. Batched is the")
+        print("   cheaper source; enable PER_EVENT_ODDS only if the per-fixture-only")
+        print("   markets above are ones you actually want.")
+        _per_event_budget(config, events, now)
     else:
         print("=> both endpoints return the same markets, so batching loses nothing.")
         print(f"   Keep PER_EVENT_ODDS=false ({EVENTS_PER_ODDS_REQUEST} fixtures per request).")
-        if not any("player" in name.lower() or "prop" in name.lower() for name in single):
-            print("\n!  No player-prop markets in either response. Props may not be included")
-            print("   on your plan, or not offered for this fixture/sport by these books.")
+
+    everything = set(batched_markets) | set(single)
+    props = sorted(name for name in everything if _looks_like_a_prop(name))
+    print()
+    if props:
+        print(f"player-prop style markets found ({len(props)}):")
+        for name in props[:15]:
+            source = "batched" if name in batched_markets else "per-fixture"
+            print(f"    {name}  [{source}]")
+        if len(props) > 15:
+            print(f"    ... and {len(props) - 15} more")
+    else:
+        print("!  Nothing that looks like a player-prop market in either response.")
+        print("   Props may not be on your plan, or not offered for this fixture.")
     return 0
+
+
+# Prop markets are named by statistic, not by the word "prop" — Pitcher
+# Strikeouts O/U and Home Runs O/U are props; Run Line and Totals are not.
+_PROP_WORDS = (
+    "player", "prop", "pitcher", "batter", "strikeout", "home run", "total bases",
+    "hits", "rbi", "walks", "singles", "doubles", "triples", "stolen base",
+    "earned run", "outs recorded", "to record", "to hit", "anytime",
+)
+
+
+def _looks_like_a_prop(market: str) -> bool:
+    name = market.lower()
+    return any(word in name for word in _PROP_WORDS)
+
+
+def _per_event_budget(config: Config, events: list, now: float) -> None:
+    """Spell out what per-fixture polling would cost against the hourly cap."""
+    import math
+
+    in_range = [
+        e for e in events
+        if config.window_end_seconds <= e.seconds_to_start(now) <= config.baseline_lead_seconds
+    ]
+    count = len(in_range) or len(events)
+    hourly = int(count * 3600 / config.poll_interval_seconds)
+    print(f"\n   with ~{count} fixture(s) in range that is ~{hourly} requests/hour")
+    if hourly > config.max_requests_per_hour:
+        needed = math.ceil(count * 3600 / config.max_requests_per_hour)
+        print(f"   — over your {config.max_requests_per_hour}/hour cap. It would fit only at")
+        print(f"     POLL_INTERVAL_SECONDS={needed}, which may be too slow for a "
+              f"{config.window_start_seconds // 60}-minute window.")
+        print("     Narrowing LEAGUES to fewer simultaneous fixtures is the way out.")
 
 
 def cmd_probe(config: Config) -> int:

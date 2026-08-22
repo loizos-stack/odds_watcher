@@ -424,7 +424,7 @@ def test_props_check_says_so_when_there_are_none(config, capsys, monkeypatch):
     assert cli.cmd_props(config) == 0
     out = capsys.readouterr().out
     assert "batching loses nothing" in out
-    assert "No player-prop markets in either response" in out
+    assert "Nothing that looks like a player-prop market" in out
 
 
 def test_per_event_mode_requests_each_fixture_individually(config, store):
@@ -448,3 +448,62 @@ def test_per_event_mode_requests_each_fixture_individually(config, store):
     watcher.poll_once(at(20))
     assert api.single_calls == ["e1", "e3"]
     assert api.odds_calls == []  # never batched
+
+
+def test_props_check_when_the_batched_endpoint_returns_more(config, capsys, monkeypatch):
+    """The real MLB answer: batched carries props the per-fixture call omits."""
+    from odds_watcher import cli
+
+    class InvertedApi(_PropsApi):
+        def get_odds_payloads(self, ids, books, **kw):
+            return [self._block(self.GAME + self.PROPS)]
+
+        def get_event_odds_raw(self, event_id, books):
+            self.per_event_calls += 1
+            return self._block(self.GAME)
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, InvertedApi(), None))
+    monkeypatch.setattr(cli, "now_ts", lambda: KICKOFF - 300)
+
+    assert cli.cmd_props(config) == 0
+    out = capsys.readouterr().out
+    assert "only in the batched response (1)" in out
+    assert "batched endpoint returns MORE" in out
+    assert "PER_EVENT_ODDS=false" in out
+    assert "batching loses nothing" not in out  # the bug this replaced
+    assert "Player Strikeouts" in out
+
+
+def test_prop_market_names_are_recognised_by_statistic():
+    """Props are named by statistic, not by the word "prop"."""
+    from odds_watcher.cli import _looks_like_a_prop
+
+    for name in ("Pitcher Strikeouts O/U", "Pitcher Walks Issued O/U", "Home Runs O/U",
+                 "Player Total Bases", "Batter Hits O/U"):
+        assert _looks_like_a_prop(name), name
+
+    for name in ("ML", "Run Line", "Totals", "First 5 Innings ML", "Team Total Away",
+                 "Last Team To Score"):
+        assert not _looks_like_a_prop(name), name
+
+
+def test_listing_counts_match_what_is_printed(config, capsys, monkeypatch):
+    """A "(12)" header followed by ten names is a reporting bug."""
+    from odds_watcher import cli
+
+    many = [{"name": f"Market {i}", "odds": [{"over": "1.9", "under": "1.9"}]} for i in range(30)]
+
+    class WideApi(_PropsApi):
+        def get_odds_payloads(self, ids, books, **kw):
+            return [self._block(self.GAME + many)]
+
+        def get_event_odds_raw(self, event_id, books):
+            return self._block(self.GAME)
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, WideApi(), None))
+    monkeypatch.setattr(cli, "now_ts", lambda: KICKOFF - 300)
+    cli.cmd_props(config)
+
+    out = capsys.readouterr().out
+    assert "only in the batched response (30)" in out
+    assert "... and 5 more" in out  # 25 shown + 5 elided == 30
