@@ -211,3 +211,93 @@ def test_budget_warning_ignores_fixtures_outside_the_lead(config, capsys):
     distant = [Event(id=str(i), start_ts=now + 6 * 3600, home=f"H{i}", away="A") for i in range(50)]
     _report_budget_fit(config, distant, now)
     assert "0 fixture(s)" in capsys.readouterr().out
+
+
+def test_probe_calls_an_unpriced_slate_a_coverage_problem(config, capsys, monkeypatch):
+    """Empty payloads mean the books do not quote these leagues — say so plainly."""
+    from odds_watcher import cli
+
+    class BlankApi:
+        budget = None
+
+        def get_events(self, sport, league=None, limit=None):
+            return [
+                Event(id="e1", start_ts=KICKOFF, home="Goianesia", away="Trindade",
+                      league="Brazil - Goiano, 2. Divisao")
+            ]
+
+        def get_odds_payloads(self, ids, books, **kw):
+            return [{"id": "e1", "urls": {}, "bookmakers": {}}]
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, BlankApi(), None))
+    monkeypatch.setattr(cli, "now_ts", lambda: KICKOFF - 600)
+
+    assert cli.cmd_probe(config) == 1
+    out = capsys.readouterr().out
+    assert "no prices from any watched book" in out
+    assert "coverage problem, not a parsing one" in out
+
+
+def test_probe_reports_which_books_priced_each_fixture(config, capsys, monkeypatch):
+    from odds_watcher import cli
+
+    class MixedApi:
+        budget = None
+
+        def get_events(self, sport, league=None, limit=None):
+            return [
+                Event(id="e1", start_ts=KICKOFF, home="Arsenal", away="Chelsea", league="EPL"),
+                Event(id="e2", start_ts=KICKOFF, home="Small", away="Club", league="Lower"),
+            ]
+
+        def get_odds_payloads(self, ids, books, **kw):
+            return [
+                {"id": "e1", "bookmakers": {"Bet365": [
+                    {"name": "Totals", "odds": [{"hdp": 2.5, "over": "1.95", "under": "1.85"}]}]}},
+                {"id": "e2", "bookmakers": {}},
+            ]
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, MixedApi(), None))
+    monkeypatch.setattr(cli, "now_ts", lambda: KICKOFF - 600)
+
+    assert cli.cmd_probe(config) == 0
+    out = capsys.readouterr().out
+    assert "✓ Arsenal vs Chelsea" in out
+    assert "✗ Small vs Club" in out
+    assert "1/2 sampled fixture(s) priced" in out
+    assert "betano priced none" in out or "priced none of the sampled fixtures" in out
+
+
+class _FakeStore:
+    def close(self):
+        pass
+
+
+def test_discovery_sampling_spans_the_whole_horizon(config):
+    """Sampling the next N fixtures only ever sees whichever region plays now."""
+    from odds_watcher import cli
+
+    now = 1_000_000.0
+
+    class Feed:
+        budget = None
+
+        def get_events(self, sport, league=None, limit=None):
+            # 100 fixtures over four days; the early ones are all one league.
+            return [
+                Event(
+                    id=str(i),
+                    start_ts=now + 600 + i * 3600,
+                    home=f"H{i}",
+                    away="A",
+                    league="Lower" if i < 25 else "Major",
+                )
+                for i in range(100)
+            ]
+
+    nearest = cli._upcoming(Feed(), config, now, 10)
+    assert {e.league for e in nearest} == {"Lower"}
+
+    spread = cli._upcoming(Feed(), config, now, 10, spread=True)
+    assert {e.league for e in spread} == {"Lower", "Major"}
+    assert len(spread) == 10

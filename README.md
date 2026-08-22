@@ -99,6 +99,7 @@ python -m odds_watcher status              # tracked lines + remaining budget
 python -m odds_watcher bookmakers          # valid bookmaker identifiers
 python -m odds_watcher leagues --search x  # valid league identifiers
 python -m odds_watcher markets             # market names the books actually offer
+python -m odds_watcher coverage            # per-league: which books price what
 python -m odds_watcher probe               # show the prices actually returned
 ```
 
@@ -186,6 +187,33 @@ tests/          72 unit tests, no network access required
 pip install -r requirements.txt
 python -m pytest -q
 ```
+
+## Coverage comes first
+
+A worldwide sport returns thousands of fixtures, and most of them are in
+leagues no major bookmaker quotes — an unpriced fixture simply returns
+`"bookmakers": {}`. Before tuning anything, find out what your books actually
+price:
+
+```bash
+python -m odds_watcher coverage
+```
+
+```
+  league                        sampled  bet365       draftkings
+  England - Premier League      15       15           15
+  Brazil - Serie A              15       15           0
+  Brazil - Goiano, 2. Divisao   15       0            0
+
+leagues priced by every watched book — a good starting LEAGUES:
+
+LEAGUES=england-premier-league
+```
+
+`coverage` and `markets` sample *across* the upcoming slate rather than taking
+the next few kick-offs, because which leagues are imminent depends entirely on
+the hour of day — a feed queried at 21:00 UTC is all South America. `probe`
+deliberately does the opposite and looks at what is about to start.
 
 ## Watching totals
 

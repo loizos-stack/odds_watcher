@@ -51,6 +51,7 @@ class Event:
     away: str
     sport: str = ""
     league: str = ""
+    league_slug: str = ""
 
     @property
     def name(self) -> str:
@@ -133,13 +134,15 @@ def parse_event(raw: dict) -> Optional[Event]:
             return str(_first(value, "name", "slug", default="")).strip()
         return str(value or "").strip()
 
+    league_raw = _first(raw, "league", "competition", "leagueName")
     return Event(
         id=str(event_id),
         start_ts=start_ts,
         home=home or "Home",
         away=away or "Away",
         sport=_name(raw.get("sport")),
-        league=_name(_first(raw, "league", "competition", "leagueName")),
+        league=_name(league_raw),
+        league_slug=str(league_raw.get("slug", "")) if isinstance(league_raw, dict) else "",
     )
 
 
@@ -438,6 +441,35 @@ class OddsApiClient:
                 label = str(_first(item, "name", "title", "slug", default=identifier))
                 rows.append((str(identifier), label))
         return sorted(set(rows))
+
+    def get_odds_payloads(
+        self, event_ids: Sequence[str], bookmakers: Sequence[str], *, fallback_limit: int = 5
+    ) -> list:
+        """Raw odds blocks for several fixtures, batched where the plan allows.
+
+        Returns one block per fixture that answered. Falls back to individual
+        requests when /odds/multi is unavailable, capped so a diagnostic can
+        never burn the whole hourly allowance.
+        """
+        if not event_ids:
+            return []
+        if self.supports_multi:
+            try:
+                return _as_list(self.get_multi_odds_raw(event_ids, bookmakers))
+            except HttpError as exc:
+                if exc.status not in (400, 401, 403, 404):
+                    raise
+                log.warning(
+                    "odds/multi unavailable (HTTP %s); sampling %d fixture(s) individually",
+                    exc.status,
+                    min(len(event_ids), fallback_limit),
+                )
+                self.supports_multi = False
+
+        blocks = []
+        for event_id in list(event_ids)[:fallback_limit]:
+            blocks.extend(_as_list(self.get_event_odds_raw(event_id, bookmakers)))
+        return blocks
 
     def get_selected_bookmakers(self) -> list[str]:
         payload = self._call("bookmakers/selected")

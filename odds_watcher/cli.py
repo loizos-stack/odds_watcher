@@ -35,6 +35,7 @@ REQUIRED_CREDENTIALS = {
     "leagues": ("ODDS_API_KEY",),
     "probe": ("ODDS_API_KEY",),
     "markets": ("ODDS_API_KEY",),
+    "coverage": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -49,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "leagues", "markets", "probe", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "leagues", "markets", "probe", "coverage", "chat-id", "status"],
     )
     parser.add_argument(
         "--search",
@@ -331,15 +332,12 @@ def cmd_markets(config: Config, search: Optional[str] = None) -> int:
     catalogue: dict = {}
     try:
         now = now_ts()
-        events = api.get_events(config.sports[0])
-        upcoming = sorted(
-            (e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts
-        )[:MARKET_SAMPLE_SIZE]
+        upcoming = _upcoming(api, config, now, MARKET_SAMPLE_SIZE, spread=True)
         if not upcoming:
             print("no upcoming fixtures to sample", file=sys.stderr)
             return 1
-        payload = api.get_multi_odds_raw([e.id for e in upcoming], config.bookmakers)
-        for name, books in market_catalogue(payload).items():
+        blocks = api.get_odds_payloads([e.id for e in upcoming], config.bookmakers)
+        for name, books in market_catalogue(blocks).items():
             entry = catalogue.setdefault(name, {})
             for book, count in books.items():
                 entry[book] = entry.get(book, 0) + count
@@ -358,7 +356,7 @@ def cmd_markets(config: Config, search: Optional[str] = None) -> int:
         return 1
 
     width = max(len(name) for name, _ in rows)
-    print(f"markets seen across the next {len(upcoming)} fixture(s):\n")
+    print(f"markets seen across {len(upcoming)} fixture(s) sampled across the upcoming slate:\n")
     for name, books in rows:
         offered = ", ".join(f"{book} ({count})" for book, count in sorted(books.items()))
         print(f"  {name.ljust(width)}  {offered}")
@@ -367,13 +365,44 @@ def cmd_markets(config: Config, search: Optional[str] = None) -> int:
     return 0
 
 
-def cmd_probe(config: Config) -> int:
-    """Fetch odds for the next fixture and show exactly what came back.
+PROBE_SAMPLE_SIZE = 10
 
-    This is the diagnostic that answers the two questions `check` cannot: are
-    the configured bookmaker names the ones this account actually receives
-    prices for, and does the payload match what the parser expects. When
-    nothing parses, the raw response is printed so the shape can be read.
+
+def _upcoming(api, config: Config, now: float, limit: int, *, spread: bool = False) -> list:
+    """Upcoming fixtures: the next `limit`, or a sample spread across them all.
+
+    Which leagues are in the *next* few fixtures depends entirely on the hour
+    of day — at 21:00 UTC a worldwide football feed is all South America. For
+    discovery (markets, coverage) that bias hides everything your books price
+    on other continents, so those commands sample evenly across the whole
+    upcoming horizon instead.
+    """
+    events = api.get_events(config.sports[0])
+    upcoming = sorted((e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts)
+    if not spread or len(upcoming) <= limit:
+        return upcoming[:limit]
+    stride = len(upcoming) / limit
+    return [upcoming[int(index * stride)] for index in range(limit)]
+
+
+def _books_in_block(block: dict, config: Config) -> dict:
+    """``{bookmaker: price count}`` for one raw odds block."""
+    from .odds_api import market_catalogue
+
+    counts: dict = {}
+    for books in market_catalogue([block]).values():
+        for book, count in books.items():
+            counts[book] = counts.get(book, 0) + count
+    return counts
+
+
+def cmd_probe(config: Config) -> int:
+    """Sample upcoming fixtures and report which ones your books actually price.
+
+    Coverage is the thing that decides whether this bot ever fires: a fixture
+    no watched bookmaker quotes yields an empty payload, which is not a fault
+    to debug. Sampling several fixtures in one batched request distinguishes
+    "wrong configuration" from "these leagues simply are not priced".
     """
     import json
 
@@ -382,47 +411,145 @@ def cmd_probe(config: Config) -> int:
     store, _, api, _ = _components(config)
     try:
         now = now_ts()
-        events = api.get_events(config.sports[0])
-        upcoming = sorted(
-            (e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts
-        )
-        if not upcoming:
+        events = _upcoming(api, config, now, PROBE_SAMPLE_SIZE)
+        if not events:
             print("no upcoming fixtures to probe", file=sys.stderr)
             return 1
-
-        event = upcoming[0]
-        print(f"probing: {event.name}  ({event.league or 'unknown league'})")
-        print(f"         kick-off {format_clock(event.start_ts)}, event id {event.id}")
-        print(f"         asking for bookmakers: {', '.join(config.bookmakers)}\n")
-
-        payload = api.get_event_odds_raw(event.id, config.bookmakers)
-        quotes = parse_quotes(payload, default_event_id=event.id)
+        by_id = {event.id: event for event in events}
+        blocks = api.get_odds_payloads([e.id for e in events], config.bookmakers)
     except TransportError as exc:
         print(f"✗ probe failed: {exc}", file=sys.stderr)
         return 1
     finally:
         store.close()
 
-    if not quotes:
-        print("✗ no prices parsed from the response. Raw payload below:\n")
-        print(json.dumps(payload, indent=2)[:4000])
-        return 1
+    print(f"sampled {len(events)} upcoming fixture(s), asking for: {', '.join(config.bookmakers)}\n")
 
-    by_book: dict = {}
-    for quote in quotes:
-        by_book.setdefault(quote.bookmaker, []).append(quote)
-    print(f"✓ parsed {len(quotes)} price(s) from {len(by_book)} bookmaker(s)")
-    for book, book_quotes in sorted(by_book.items()):
-        print(f"\n  {book} — {len(book_quotes)} price(s)")
-        for quote in book_quotes[:6]:
-            print(f"    {quote.label}: {quote.odds:.2f}")
+    priced, empty = [], []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        event = by_id.get(str(block.get("id") or block.get("eventId") or ""))
+        counts = _books_in_block(block, config)
+        (priced if counts else empty).append((event, block, counts))
+
+    for event, _block, counts in priced:
+        name = event.name if event else "?"
+        league = f" ({event.league})" if event and event.league else ""
+        books = ", ".join(f"{b} ({c})" for b, c in sorted(counts.items()))
+        print(f"  ✓ {name}{league}\n      {books}")
+    for event, _block, _counts in empty:
+        name = event.name if event else "?"
+        league = f" ({event.league})" if event and event.league else ""
+        print(f"  ✗ {name}{league} — no prices from any watched book")
 
     wanted = {b.lower() for b in config.bookmakers}
-    missing = wanted - set(by_book)
-    if missing:
-        print(f"\n! no prices for: {', '.join(sorted(missing))}")
-        print("  Either the identifier is wrong (`bookmakers --search`) or this")
-        print("  fixture simply has no market at that book — try again on a bigger game.")
+    seen = {book for _e, _b, counts in priced for book in counts}
+    print(f"\n{len(priced)}/{len(blocks)} sampled fixture(s) priced by at least one watched book")
+
+    if not priced:
+        print("\n✗ nothing priced. This is a coverage problem, not a parsing one:")
+        print("  these leagues are not quoted by your books. Narrow LEAGUES to")
+        print("  competitions they cover, or watch a book with wider coverage.")
+        if blocks:
+            print("\nOne raw payload for reference:\n")
+            print(json.dumps(blocks[0], indent=2)[:1500])
+        return 1
+
+    for book in sorted(wanted - seen):
+        print(f"! {book} priced none of the sampled fixtures")
+
+    example = priced[0]
+    quotes = parse_quotes([example[1]], default_event_id=example[0].id if example[0] else None)
+    if quotes:
+        print(f"\nsample prices from {example[0].name if example[0] else '?'}:")
+        for quote in quotes[:8]:
+            print(f"    {quote.bookmaker:12} {quote.label}: {quote.odds:.2f}")
+    return 0
+
+
+COVERAGE_SAMPLE_SIZE = 60
+
+
+def cmd_coverage(config: Config) -> int:
+    """Report, per league, how many upcoming fixtures the watched books price.
+
+    A worldwide sport returns thousands of fixtures, most of them in leagues no
+    major bookmaker quotes. This samples the next fixtures in batched requests
+    and groups the result by league, so LEAGUES can be set to competitions that
+    actually produce prices instead of guessed at.
+    """
+    from .watcher import EVENTS_PER_ODDS_REQUEST, chunked
+
+    store, _, api, _ = _components(config)
+    try:
+        now = now_ts()
+        events = _upcoming(api, config, now, COVERAGE_SAMPLE_SIZE, spread=True)
+        if not events:
+            print("no upcoming fixtures to sample", file=sys.stderr)
+            return 1
+        by_id = {event.id: event for event in events}
+        blocks = []
+        for batch in chunked([e.id for e in events], EVENTS_PER_ODDS_REQUEST):
+            blocks.extend(api.get_odds_payloads(batch, config.bookmakers))
+    except TransportError as exc:
+        print(f"✗ coverage check failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+    leagues: dict = {}
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        event = by_id.get(str(block.get("id") or block.get("eventId") or ""))
+        if event is None:
+            continue
+        entry = leagues.setdefault(
+            event.league or "unknown", {"slug": event.league_slug, "sampled": 0, "books": {}}
+        )
+        entry["sampled"] += 1
+        for book in _books_in_block(block, config):
+            entry["books"][book] = entry["books"].get(book, 0) + 1
+
+    if not leagues:
+        print("no fixtures came back with odds at all", file=sys.stderr)
+        return 1
+
+    wanted = [b.lower() for b in config.bookmakers]
+    ranked = sorted(
+        leagues.items(),
+        key=lambda kv: (-sum(kv[1]["books"].values()), kv[0]),
+    )
+    width = min(max(len(name) for name in leagues), 46)
+    span = format_countdown(max(e.seconds_to_start(now) for e in events))
+    print(
+        f"coverage across {len(blocks)} fixture(s) sampled over the next {span}, "
+        f"books: {', '.join(config.bookmakers)}\n"
+    )
+    print(f"  {'league'.ljust(width)}  sampled  " + "  ".join(b.ljust(11) for b in wanted))
+    for name, entry in ranked:
+        cells = "  ".join(str(entry["books"].get(book, 0)).ljust(11) for book in wanted)
+        print(f"  {name[:width].ljust(width)}  {str(entry['sampled']).ljust(7)}  {cells}")
+
+    covered = [
+        entry["slug"] or name
+        for name, entry in ranked
+        if all(entry["books"].get(book) for book in wanted)
+    ]
+    print()
+    if covered:
+        print("leagues priced by every watched book — a good starting LEAGUES:\n")
+        print("LEAGUES=" + ",".join(covered[:12]))
+    else:
+        partial = [entry["slug"] or name for name, entry in ranked if entry["books"]]
+        if partial:
+            print("no league in this sample was priced by *all* watched books.")
+            print("Priced by at least one:\n")
+            print("LEAGUES=" + ",".join(partial[:12]))
+        else:
+            print("nothing in this sample was priced. Your books do not quote these")
+            print("leagues at all — sample again when a bigger slate is upcoming.")
     return 0
 
 
@@ -464,6 +591,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_probe(config)
     if args.command == "markets":
         return cmd_markets(config, args.search)
+    if args.command == "coverage":
+        return cmd_coverage(config)
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "status":

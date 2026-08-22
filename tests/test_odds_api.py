@@ -324,3 +324,43 @@ def test_market_catalogue_counts_prices_per_book():
     assert catalogue["Totals"] == {"bet365": 2, "betano": 2}
     assert catalogue["Alternative Asian Handicap"] == {"bet365": 4}
     assert "urls" not in catalogue  # non-market keys must not leak in
+
+
+def test_event_carries_the_league_slug():
+    """LEAGUES is configured by slug, so the slug has to survive parsing."""
+    event = parse_event(
+        {"id": 1, "date": 1787000000, "home": "A", "away": "B",
+         "league": {"name": "England - Premier League", "slug": "england-premier-league"}}
+    )
+    assert event.league == "England - Premier League"
+    assert event.league_slug == "england-premier-league"
+    assert parse_event({"id": 2, "date": 1, "league": "Plain Name"}).league_slug == ""
+
+
+def test_unpriced_fixture_yields_no_markets():
+    """A fixture no watched book quotes comes back empty — not an error."""
+    from odds_watcher.odds_api import market_catalogue
+
+    block = {"id": 72014324, "home": "A", "away": "B", "urls": {}, "bookmakers": {}}
+    assert market_catalogue([block]) == {}
+
+
+def test_odds_payloads_fall_back_within_a_cap(monkeypatch):
+    """The per-event fallback must not burn the hourly allowance on a diagnostic."""
+    from odds_watcher.http import HttpError
+
+    calls = []
+
+    def fake_request(url, **kwargs):
+        calls.append(url)
+        if "odds/multi" in url:
+            raise HttpError(403, "not on your plan", url)
+        return {"id": "x", "bookmakers": {}}
+
+    monkeypatch.setattr("odds_watcher.odds_api.request_json", fake_request)
+    client = OddsApiClient("secret")
+    blocks = client.get_odds_payloads([str(i) for i in range(20)], ["Bet365"], fallback_limit=3)
+
+    assert len(blocks) == 3
+    assert sum("odds/multi" in url for url in calls) == 1
+    assert sum("odds?" in url for url in calls) == 3
