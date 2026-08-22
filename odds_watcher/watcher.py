@@ -101,9 +101,20 @@ class Watcher:
 
         by_id = {event.id: event for event in events}
         quotes_by_event: dict[str, list[Quote]] = defaultdict(list)
-        for batch in chunked([event.id for event in events], EVENTS_PER_ODDS_REQUEST):
+        # One request per fixture when props are wanted, otherwise batched.
+        batches = (
+            [[event.id] for event in events]
+            if self.config.per_event_odds
+            else list(chunked([event.id for event in events], EVENTS_PER_ODDS_REQUEST))
+        )
+        for batch in batches:
             try:
-                for quote in self.api.get_multi_odds(batch, self.config.bookmakers):
+                quotes = (
+                    self.api.get_event_odds(batch[0], self.config.bookmakers)
+                    if self.config.per_event_odds
+                    else self.api.get_multi_odds(batch, self.config.bookmakers)
+                )
+                for quote in quotes:
                     quotes_by_event[quote.event_id].append(quote)
             except BudgetExceeded as exc:
                 log.warning("%s", exc)

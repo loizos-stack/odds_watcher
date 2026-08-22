@@ -371,3 +371,80 @@ def test_bad_sport_slug_is_explained_with_near_matches(config, capsys, monkeypat
     out = capsys.readouterr().out
     assert "slugs are lowercase" in out
     assert "did you mean, for 'Baseball': baseball" in out
+
+
+class _PropsApi:
+    """Batched response carries game markets; per-fixture adds player props."""
+
+    budget = None
+
+    def __init__(self, props=True):
+        self.props = props
+        self.per_event_calls = 0
+
+    @staticmethod
+    def _block(markets):
+        return {"id": "m0", "bookmakers": {"Bet365": markets}}
+
+    GAME = [{"name": "ML", "odds": [{"home": "1.85", "away": "1.95"}]},
+            {"name": "Totals", "odds": [{"hdp": 8.5, "over": "1.90", "under": "1.90"}]}]
+    PROPS = [{"name": "Player Strikeouts", "odds": [{"hdp": 5.5, "over": "1.9", "under": "1.9"}]}]
+
+    def get_events(self, sport, league=None, limit=None):
+        return [Event(id="m0", start_ts=KICKOFF, home="Yankees", away="Red Sox", league="USA - MLB")]
+
+    def get_odds_payloads(self, ids, books, **kw):
+        return [self._block(self.GAME)]
+
+    def get_event_odds_raw(self, event_id, books):
+        self.per_event_calls += 1
+        return self._block(self.GAME + self.PROPS if self.props else self.GAME)
+
+
+def test_props_check_detects_a_per_fixture_only_market(config, capsys, monkeypatch):
+    from odds_watcher import cli
+
+    api = _PropsApi(props=True)
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, api, None))
+    monkeypatch.setattr(cli, "now_ts", lambda: KICKOFF - 300)
+
+    assert cli.cmd_props(config) == 0
+    out = capsys.readouterr().out
+    assert "Player Strikeouts" in out
+    assert "PER_EVENT_ODDS=true" in out
+    assert api.per_event_calls == 1
+
+
+def test_props_check_says_so_when_there_are_none(config, capsys, monkeypatch):
+    from odds_watcher import cli
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, _PropsApi(props=False), None))
+    monkeypatch.setattr(cli, "now_ts", lambda: KICKOFF - 300)
+
+    assert cli.cmd_props(config) == 0
+    out = capsys.readouterr().out
+    assert "batching loses nothing" in out
+    assert "No player-prop markets in either response" in out
+
+
+def test_per_event_mode_requests_each_fixture_individually(config, store):
+    """PER_EVENT_ODDS trades request budget for the markets only /odds returns."""
+    import dataclasses
+
+    class CountingApi(FakeApi):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.single_calls = []
+
+        def get_event_odds(self, event_id, bookmakers):
+            self.single_calls.append(event_id)
+            return [quote(2.00, event_id=event_id)]
+
+    other = Event(id="e3", start_ts=KICKOFF, home="Roma", away="Lazio")
+    cfg = dataclasses.replace(config, per_event_odds=True)
+    api = CountingApi([EVENT, other], [])
+    watcher = Watcher(cfg, api, FakeTelegram(), store)
+
+    watcher.poll_once(at(20))
+    assert api.single_calls == ["e1", "e3"]
+    assert api.odds_calls == []  # never batched

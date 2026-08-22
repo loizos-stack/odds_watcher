@@ -120,6 +120,10 @@ class Config:
     max_requests_per_day: int = 450
 
     # --- plumbing --------------------------------------------------------
+    # Fetch odds one fixture at a time instead of batching. Player props are
+    # documented as being available per event, so a batched request may return
+    # only game markets. Costs one request per fixture per poll.
+    per_event_odds: bool = False
     api_base_url: str = "https://api2.odds-api.io/v3"
     request_timeout_seconds: int = 20
     db_path: Path = field(default=Path("odds_watcher.db"))
@@ -198,6 +202,7 @@ class Config:
             events_refresh_seconds=_get_int(env, "EVENTS_REFRESH_SECONDS", 900, minimum=60),
             max_requests_per_hour=_get_int(env, "MAX_REQUESTS_PER_HOUR", 90, minimum=1),
             max_requests_per_day=_get_int(env, "MAX_REQUESTS_PER_DAY", 450, minimum=1),
+            per_event_odds=_get_bool(env, "PER_EVENT_ODDS"),
             api_base_url=env.get("ODDS_API_BASE_URL", "https://api2.odds-api.io/v3").rstrip("/"),
             request_timeout_seconds=_get_int(env, "REQUEST_TIMEOUT_SECONDS", 20, minimum=1),
             db_path=Path(env.get("DB_PATH", "odds_watcher.db")).expanduser(),

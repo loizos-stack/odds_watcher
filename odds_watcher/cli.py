@@ -37,6 +37,7 @@ REQUIRED_CREDENTIALS = {
     "probe": ("ODDS_API_KEY",),
     "markets": ("ODDS_API_KEY",),
     "coverage": ("ODDS_API_KEY",),
+    "props": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -51,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "probe", "coverage", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "chat-id", "status"],
     )
     parser.add_argument(
         "--sport",
@@ -314,7 +315,10 @@ def _report_budget_fit(config: Config, upcoming: list, now: float) -> None:
         if config.window_end_seconds <= event.seconds_to_start(now) <= config.baseline_lead_seconds
     ]
     polls_per_hour = 3600 / config.poll_interval_seconds
-    per_poll = math.ceil(len(in_range) / EVENTS_PER_ODDS_REQUEST) if in_range else 0
+    if config.per_event_odds:
+        per_poll = len(in_range)
+    else:
+        per_poll = math.ceil(len(in_range) / EVENTS_PER_ODDS_REQUEST) if in_range else 0
     hourly = int(per_poll * polls_per_hour)
 
     print(f"· {len(in_range)} fixture(s) inside the {config.baseline_lead_seconds // 60}-min tracking lead right now")
@@ -460,6 +464,91 @@ def _books_in_block(block: dict, config: Config) -> dict:
         for book, count in books.items():
             counts[book] = counts.get(book, 0) + count
     return counts
+
+
+def cmd_props(config: Config) -> int:
+    """Determine whether player props require per-fixture requests.
+
+    odds-api.io documents props as being available one event at a time, which
+    suggests the batched /odds/multi response may carry only game markets.
+    That distinction decides the request budget entirely, so this fetches the
+    same fixture both ways and compares what each returns.
+    """
+    import math
+
+    from .odds_api import market_catalogue
+    from .watcher import EVENTS_PER_ODDS_REQUEST
+
+    store, _, api, _ = _components(config)
+    try:
+        now = now_ts()
+        events = _upcoming(api, config, now, PROBE_SAMPLE_SIZE)
+        if not events:
+            print("no upcoming fixtures to inspect", file=sys.stderr)
+            return 1
+
+        batched = api.get_odds_payloads([e.id for e in events], config.bookmakers)
+        target, batched_markets = None, {}
+        for block in batched:
+            if not isinstance(block, dict):
+                continue
+            catalogue = market_catalogue([block])
+            if catalogue:
+                event_id = str(block.get("id") or block.get("eventId") or "")
+                target = next((e for e in events if e.id == event_id), None)
+                batched_markets = catalogue
+                break
+        if target is None:
+            target = events[0]
+            print(f"no fixture in the sample had batched prices; inspecting {target.name}\n")
+
+        single = market_catalogue([api.get_event_odds_raw(target.id, config.bookmakers)])
+    except TransportError as exc:
+        print(f"✗ props check failed: {exc}", file=sys.stderr)
+        _sport_error(api, config, exc)
+        return 1
+    finally:
+        store.close()
+
+    print(f"fixture: {target.name}  ({target.league or 'unknown league'})\n")
+    print(f"  /odds/multi (batched)   : {len(batched_markets):>4} market(s)")
+    print(f"  /odds       (per fixture): {len(single):>4} market(s)")
+
+    only_single = sorted(set(single) - set(batched_markets))
+    only_batched = sorted(set(batched_markets) - set(single))
+    if only_single:
+        print(f"\nonly in the per-fixture response ({len(only_single)}):")
+        for name in only_single[:25]:
+            print(f"    {name}")
+        if len(only_single) > 25:
+            print(f"    ... and {len(only_single) - 25} more")
+    if only_batched:
+        print(f"\nonly in the batched response ({len(only_batched)}): {', '.join(only_batched[:10])}")
+
+    print()
+    if only_single:
+        print("=> the per-fixture endpoint returns more. Set PER_EVENT_ODDS=true to")
+        print("   collect these, at the cost of one request per fixture per poll.")
+        in_range = [
+            e for e in events
+            if config.window_end_seconds <= e.seconds_to_start(now) <= config.baseline_lead_seconds
+        ]
+        count = len(in_range) or len(events)
+        hourly = int(count * 3600 / config.poll_interval_seconds)
+        print(f"\n   with ~{count} fixture(s) in range that is ~{hourly} requests/hour")
+        if hourly > config.max_requests_per_hour:
+            needed = math.ceil(count * 3600 / config.max_requests_per_hour)
+            print(f"   — over your {config.max_requests_per_hour}/hour cap. It would fit only at")
+            print(f"     POLL_INTERVAL_SECONDS={needed}, which may be too slow for a "
+                  f"{config.window_start_seconds // 60}-minute window.")
+            print("     Narrowing LEAGUES to fewer simultaneous fixtures is the way out.")
+    else:
+        print("=> both endpoints return the same markets, so batching loses nothing.")
+        print(f"   Keep PER_EVENT_ODDS=false ({EVENTS_PER_ODDS_REQUEST} fixtures per request).")
+        if not any("player" in name.lower() or "prop" in name.lower() for name in single):
+            print("\n!  No player-prop markets in either response. Props may not be included")
+            print("   on your plan, or not offered for this fixture/sport by these books.")
+    return 0
 
 
 def cmd_probe(config: Config) -> int:
@@ -669,6 +758,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_markets(config, args.search)
     if args.command == "coverage":
         return cmd_coverage(config)
+    if args.command == "props":
+        return cmd_props(config)
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "status":

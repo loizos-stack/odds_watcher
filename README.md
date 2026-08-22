@@ -100,6 +100,7 @@ python -m odds_watcher bookmakers          # valid bookmaker identifiers
 python -m odds_watcher leagues --search x  # valid league identifiers
 python -m odds_watcher markets             # market names the books actually offer
 python -m odds_watcher coverage            # per-league: which books price what
+python -m odds_watcher props               # do props need per-fixture requests?
 python -m odds_watcher probe               # show the prices actually returned
 ```
 
@@ -163,6 +164,7 @@ Every setting is an environment variable, documented in
 | `BASELINE_LEAD_SECONDS` | `900` | Start recording prices 15 min out |
 | `MIN_DROP_PCT` | `5.0` | Minimum shortening to alert on |
 | `MAX_ALERTS_PER_POLL` | `20` | Largest drops win when a poll finds many |
+| `PER_EVENT_ODDS` | `false` | One request per fixture; needed for props |
 | `POLL_INTERVAL_SECONDS` | `60` | Poll cadence while fixtures are close |
 | `MAX_REQUESTS_PER_HOUR` | `90` | Local cap below the free tier's 100 |
 
@@ -188,6 +190,37 @@ tests/          72 unit tests, no network access required
 pip install -r requirements.txt
 python -m pytest -q
 ```
+
+## Player props
+
+odds-api.io documents player props as being available one fixture at a time,
+and their coverage as mainly US sports at US bookmakers. Whether the batched
+`/odds/multi` response carries them differs by account, so measure rather than
+assume:
+
+```bash
+python -m odds_watcher props
+```
+
+It fetches the same fixture through both endpoints and reports the difference:
+
+```
+  /odds/multi (batched)   :    3 market(s)
+  /odds       (per fixture):    8 market(s)
+
+only in the per-fixture response (5):
+    Player Hits
+    Player Home Runs
+    ...
+=> the per-fixture endpoint returns more. Set PER_EVENT_ODDS=true to
+   collect these, at the cost of one request per fixture per poll.
+```
+
+`PER_EVENT_ODDS=true` makes the watcher request each fixture separately. That
+is the only way to reach per-fixture-only markets, and it costs one request per
+fixture per poll rather than one per twenty — on the free tier that is the
+binding constraint, so the command prints the arithmetic for your own slate and
+the poll interval that would fit.
 
 ## Watching everything, including player props
 
