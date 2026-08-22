@@ -81,3 +81,20 @@ def test_force_utf8_output_survives_odd_streams(monkeypatch):
 
     monkeypatch.setattr(sys, "stdout", Ancient())
     force_utf8_output()  # must not raise
+
+
+def test_chat_id_command_does_not_require_the_chat_id():
+    """The command that discovers the chat id must run without one."""
+    config = Config.from_env({"TELEGRAM_BOT_TOKEN": "t"}, required=("TELEGRAM_BOT_TOKEN",))
+    assert config.telegram_bot_token == "t"
+    assert config.telegram_chat_id == ""
+
+
+def test_missing_chat_id_alone_points_at_the_chat_id_command():
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env({"ODDS_API_KEY": "k", "TELEGRAM_BOT_TOKEN": "t"})
+    assert "chat-id" in str(exc.value)
+
+
+def test_status_needs_no_credentials_at_all():
+    assert Config.from_env({}, required=()).bookmakers == ("bet365", "betano")

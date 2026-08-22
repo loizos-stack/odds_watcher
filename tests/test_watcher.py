@@ -171,3 +171,14 @@ def test_telegram_outage_keeps_the_alert_pending(config, store):
     assert len(watcher.poll_once(at(5))) == 1
     watcher.telegram = FakeTelegram()
     assert len(watcher.poll_once(at(4))) == 1  # not marked as sent, so still alertable
+
+
+def test_cli_command_credential_requirements_are_satisfiable():
+    """Every command's declared requirements must actually build a Config."""
+    from odds_watcher.cli import REQUIRED_CREDENTIALS
+    from odds_watcher.config import ALL_CREDENTIALS, Config
+
+    for command in ("run", "once", "check", "select-bookmakers", "chat-id", "status"):
+        required = REQUIRED_CREDENTIALS.get(command, ALL_CREDENTIALS)
+        env = {name: "value" for name in required}
+        assert Config.from_env(env, required=required) is not None

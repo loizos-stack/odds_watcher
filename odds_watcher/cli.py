@@ -15,7 +15,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .config import Config, ConfigError, load_dotenv
+from .config import ALL_CREDENTIALS, Config, ConfigError, load_dotenv
 from .detector import Alert
 from .http import TransportError
 from .odds_api import OddsApiClient
@@ -25,6 +25,14 @@ from .util import format_clock, format_countdown, now_ts
 from .watcher import Watcher
 
 log = logging.getLogger("odds_watcher")
+
+
+# Each command only demands the credentials it actually uses.
+REQUIRED_CREDENTIALS = {
+    "chat-id": ("TELEGRAM_BOT_TOKEN",),
+    "select-bookmakers": ("ODDS_API_KEY",),
+    "status": (),
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,7 +163,11 @@ def cmd_select_bookmakers(config: Config) -> int:
 
 def cmd_chat_id(config: Config) -> int:
     _, _, _, telegram = _components(config)
-    updates = telegram.get_updates()
+    try:
+        updates = telegram.get_updates()
+    except TransportError as exc:
+        print(f"✗ could not reach Telegram: {exc}", file=sys.stderr)
+        return 1
     if not updates:
         print(
             "No updates yet. Send any message to your bot in Telegram, then run this again.",
@@ -201,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
     force_utf8_output()
     load_dotenv(Path(args.env_file))
     try:
-        config = Config.from_env()
+        config = Config.from_env(required=REQUIRED_CREDENTIALS.get(args.command, ALL_CREDENTIALS))
     except ConfigError as exc:
         setup_logging(args.log_level or "INFO")
         print(f"Configuration error: {exc}", file=sys.stderr)

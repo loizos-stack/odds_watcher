@@ -50,3 +50,20 @@ def test_dry_run_does_not_send(caplog):
 def test_url_building():
     client = TelegramClient("abc", "42")
     assert client._url("sendMessage") == "https://api.telegram.org/botabc/sendMessage"
+
+
+def test_chat_id_reports_a_telegram_outage_without_a_traceback(monkeypatch, capsys, tmp_path):
+    from odds_watcher.cli import cmd_chat_id
+    from odds_watcher.config import Config
+    from odds_watcher.http import TransportError
+
+    def explode(self):
+        raise TransportError("api.telegram.org unreachable after 3 attempts")
+
+    monkeypatch.setattr(TelegramClient, "get_updates", explode)
+    config = Config.from_env(
+        {"TELEGRAM_BOT_TOKEN": "t", "DB_PATH": str(tmp_path / "s.db")},
+        required=("TELEGRAM_BOT_TOKEN",),
+    )
+    assert cmd_chat_id(config) == 1
+    assert "could not reach Telegram" in capsys.readouterr().err

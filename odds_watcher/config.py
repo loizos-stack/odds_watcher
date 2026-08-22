@@ -11,10 +11,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 
 DEFAULT_BOOKMAKERS = ("bet365", "betano")
+
+# Credentials every normal run needs. Individual commands narrow this: the
+# `chat-id` command exists precisely because the chat id is not known yet.
+ALL_CREDENTIALS = ("ODDS_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 
 
 class ConfigError(RuntimeError):
@@ -119,19 +123,26 @@ class Config:
         return f"{self.window_end_seconds // 60}-{self.window_start_seconds // 60} min before kick-off"
 
     @classmethod
-    def from_env(cls, env: Optional[dict] = None) -> "Config":
+    def from_env(
+        cls,
+        env: Optional[dict] = None,
+        *,
+        required: Sequence[str] = ALL_CREDENTIALS,
+    ) -> "Config":
+        """Build a config from the environment.
+
+        ``required`` lets a command ask for only the credentials it actually
+        uses, so `chat-id` can run before TELEGRAM_CHAT_ID is known.
+        """
         env = dict(os.environ if env is None else env)
 
-        missing = [
-            name
-            for name in ("ODDS_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
-            if not env.get(name)
-        ]
+        missing = [name for name in required if not env.get(name)]
         if missing:
+            hint = "Copy .env.example to .env and fill it in."
+            if missing == ["TELEGRAM_CHAT_ID"]:
+                hint = "Message your bot in Telegram, then run `chat-id` to discover it."
             raise ConfigError(
-                "Missing required environment variable(s): "
-                + ", ".join(missing)
-                + ". Copy .env.example to .env and fill it in."
+                "Missing required environment variable(s): " + ", ".join(missing) + ". " + hint
             )
 
         bookmakers = _csv(env.get("BOOKMAKERS", ",".join(DEFAULT_BOOKMAKERS)))
@@ -153,9 +164,9 @@ class Config:
             )
 
         return cls(
-            odds_api_key=env["ODDS_API_KEY"].strip(),
-            telegram_bot_token=env["TELEGRAM_BOT_TOKEN"].strip(),
-            telegram_chat_id=env["TELEGRAM_CHAT_ID"].strip(),
+            odds_api_key=env.get("ODDS_API_KEY", "").strip(),
+            telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN", "").strip(),
+            telegram_chat_id=env.get("TELEGRAM_CHAT_ID", "").strip(),
             bookmakers=bookmakers,
             sports=_csv(env.get("SPORTS", "football")) or ("football",),
             leagues=_csv(env.get("LEAGUES", "")),
