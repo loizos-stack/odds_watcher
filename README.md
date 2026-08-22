@@ -1,7 +1,7 @@
 # odds_watcher
 
 A Telegram bot that messages you when a betting line **drops in the last 10
-minutes before kick-off** at **bet365** or **betano**, using the
+minutes before kick-off** at the two bookmakers you choose, using the
 [odds-api.io](https://odds-api.io/) free tier.
 
 ```
@@ -20,7 +20,7 @@ Odds: 2.00 → 1.80 (-10.0%)
 "Line drops 0–10 minutes before game time" is implemented as:
 
 1. From **15 minutes** before kick-off (`BASELINE_LEAD_SECONDS`) the bot records
-   every price bet365 and betano offer on each upcoming fixture.
+   every price the two watched bookmakers offer on each upcoming fixture.
 2. The price standing when the fixture crosses **T-10 minutes**
    (`WINDOW_START_SECONDS`) becomes the **baseline**.
 3. Inside the window (T-10 → kick-off, `WINDOW_END_SECONDS`) every poll compares
@@ -46,7 +46,7 @@ Consequences worth knowing:
 
 * **odds-api.io key** — sign up at <https://odds-api.io/#pricing> and copy the
   API key. The free tier gives 100 requests/hour (500/day) and lets you select
-  **2 bookmakers**, which is exactly bet365 + betano.
+  **2 bookmakers**, selected on the odds-api.io dashboard.
 * **Telegram bot** — message [@BotFather](https://t.me/BotFather), send
   `/newbot`, and copy the token it returns. Then send any message to your new
   bot so it is allowed to write to you.
@@ -152,7 +152,7 @@ Every setting is an environment variable, documented in
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `BOOKMAKERS` | `bet365,betano` | Books to watch (free tier allows 2) |
+| `BOOKMAKERS` | `Bet365,DraftKings` | Books to watch (free tier allows 2) |
 | `SPORTS` | `football` | Comma-separated sports to follow |
 | `LEAGUES` | *(all)* | Restrict to specific league slugs |
 | `MARKETS` | *(all)* | e.g. `Totals,Corner,-HT`; substring, `-` excludes |

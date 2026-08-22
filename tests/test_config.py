@@ -7,7 +7,7 @@ BASE = {"ODDS_API_KEY": "k", "TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}
 
 def test_defaults_match_the_stated_rule():
     config = Config.from_env(BASE)
-    assert config.bookmakers == ("bet365", "betano")
+    assert config.bookmakers == ("Bet365", "DraftKings")
     assert (config.window_end_seconds, config.window_start_seconds) == (0, 600)
     assert config.alert_window_label == "0-10 min before kick-off"
 
@@ -97,7 +97,7 @@ def test_missing_chat_id_alone_points_at_the_chat_id_command():
 
 
 def test_status_needs_no_credentials_at_all():
-    assert Config.from_env({}, required=()).bookmakers == ("bet365", "betano")
+    assert Config.from_env({}, required=()).bookmakers == ("Bet365", "DraftKings")
 
 
 def test_bookmakers_command_needs_only_the_api_key():

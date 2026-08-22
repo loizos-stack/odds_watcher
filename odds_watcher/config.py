@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 
-DEFAULT_BOOKMAKERS = ("bet365", "betano")
+DEFAULT_BOOKMAKERS = ("Bet365", "DraftKings")
 
 # Credentials every normal run needs. Individual commands narrow this: the
 # `chat-id` command exists precisely because the chat id is not known yet.

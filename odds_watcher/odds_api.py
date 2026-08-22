@@ -6,7 +6,7 @@ Only the handful of endpoints the watcher needs are wrapped:
 * ``GET /odds``                       - odds for one event
 * ``GET /odds/multi``                 - odds for several events in one call
 * ``GET /bookmakers/selected``        - which books the free tier is bound to
-* ``PUT /bookmakers/selected/select`` - bind the account to bet365 + betano
+* ``PUT /bookmakers/selected/select`` - bind the account to the chosen books
 
 The response parsers are deliberately forgiving: the API has shipped more than
 one payload shape (bare list vs. ``{"data": [...]}``, participant objects vs.

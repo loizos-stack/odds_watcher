@@ -2,7 +2,7 @@
 
 The rule implemented here is the one the bot exists for:
 
-    alert when the price of an outcome at bet365 or betano falls by at least
+    alert when the price of an outcome at either watched bookmaker falls by at least
     ``MIN_DROP_PCT`` **during the last 10 minutes before kick-off**, measured
     against the price that stood when the event entered that window.
 

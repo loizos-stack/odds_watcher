@@ -3,7 +3,7 @@
     python -m odds_watcher run                # daemon (default)
     python -m odds_watcher once               # single poll, for cron
     python -m odds_watcher check              # verify credentials end to end
-    python -m odds_watcher select-bookmakers  # bind the account to bet365+betano
+    python -m odds_watcher select-bookmakers  # bind the account to your two books
     python -m odds_watcher chat-id            # discover your Telegram chat id
     python -m odds_watcher status             # budget + tracked lines
 """
@@ -43,7 +43,7 @@ REQUIRED_CREDENTIALS = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="odds_watcher",
-        description="Telegram alerts when bet365/betano odds drop just before kick-off.",
+        description="Telegram alerts when a bookmaker's odds drop just before kick-off.",
     )
     parser.add_argument(
         "command",

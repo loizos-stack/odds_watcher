@@ -196,3 +196,26 @@ def test_totals_lines_are_tracked_separately(config, store):
     assert len(alerts) == 1
     assert alerts[0].quote.line == "3.5"
     assert alerts[0].reference_odds == 3.20
+
+
+def test_bookmaker_matching_is_case_insensitive(config, store):
+    """Config says "DraftKings"; the payload key is whatever the API sends."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, bookmakers=("Bet365", "DraftKings"))
+    detector = DropDetector(cfg, store)
+
+    for name in ("draftkings", "DraftKings", "DRAFTKINGS"):
+        assert detector.relevant(quote(2.0, bookmaker=name.lower()))
+    assert not detector.relevant(quote(2.0, bookmaker="betano"))
+
+
+def test_switching_books_leaves_the_old_ones_inert(config, store):
+    """Stale baselines from a previous bookmaker must not produce alerts."""
+    import dataclasses
+
+    old = DropDetector(dataclasses.replace(config, bookmakers=("Bet365", "Betano")), store)
+    old.process(EVENT, [quote(2.00, bookmaker="betano")], at(20))
+
+    new = DropDetector(dataclasses.replace(config, bookmakers=("Bet365", "DraftKings")), store)
+    assert new.process(EVENT, [quote(1.50, bookmaker="betano")], at(5)) == []
