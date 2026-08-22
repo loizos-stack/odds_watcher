@@ -1,0 +1,95 @@
+"""Telegram Bot API client and alert formatting."""
+
+from __future__ import annotations
+
+import html
+import logging
+from typing import Optional
+
+from .detector import Alert
+from .http import HttpError, build_url, request_json
+from .util import format_clock, format_countdown
+
+log = logging.getLogger(__name__)
+
+API_BASE = "https://api.telegram.org"
+
+
+class TelegramClient:
+    def __init__(
+        self,
+        token: str,
+        chat_id: str,
+        *,
+        base_url: str = API_BASE,
+        timeout: int = 20,
+        dry_run: bool = False,
+    ):
+        self.token = token
+        self.chat_id = chat_id
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.dry_run = dry_run
+
+    def _url(self, method: str) -> str:
+        return build_url(self.base_url, f"bot{self.token}/{method}")
+
+    def send_message(self, text: str, *, disable_preview: bool = True) -> Optional[dict]:
+        if self.dry_run:
+            log.info("[dry-run] would send to %s:\n%s", self.chat_id, text)
+            return None
+        payload = {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": disable_preview,
+        }
+        try:
+            return request_json(self._url("sendMessage"), method="POST", payload=payload, timeout=self.timeout)
+        except HttpError as exc:
+            log.error("telegram sendMessage failed: %s", exc)
+            raise
+
+    def get_me(self) -> dict:
+        return request_json(self._url("getMe"), timeout=self.timeout)
+
+    def get_updates(self) -> list:
+        response = request_json(self._url("getUpdates"), timeout=self.timeout) or {}
+        return response.get("result", [])
+
+
+def _esc(value: object) -> str:
+    return html.escape(str(value), quote=False)
+
+
+def format_alert(alert: Alert) -> str:
+    """Render one drop as a Telegram HTML message."""
+    quote = alert.quote
+    event = alert.event
+    header = "📉 <b>Odds drop</b>" + (" (continuing)" if alert.is_repeat else "")
+    lines = [
+        f"{header} · <b>{_esc(quote.bookmaker.upper())}</b>",
+        "",
+        f"<b>{_esc(event.name)}</b>",
+    ]
+    context = " · ".join(part for part in (event.sport, event.league) if part)
+    if context:
+        lines.append(_esc(context))
+    lines += [
+        f"Kick-off in <b>{format_countdown(alert.seconds_to_start)}</b> "
+        f"({_esc(format_clock(event.start_ts))})",
+        "",
+        f"Market: <b>{_esc(quote.label)}</b>",
+        f"Odds: <s>{alert.reference_odds:.2f}</s> → <b>{quote.odds:.2f}</b> "
+        f"(<b>-{alert.drop_pct:.1f}%</b>)",
+    ]
+    return "\n".join(lines)
+
+
+def format_digest(alerts: list) -> str:
+    """One message covering several drops found in the same poll."""
+    if len(alerts) == 1:
+        return format_alert(alerts[0])
+    blocks = [format_alert(alert) for alert in alerts]
+    separator = "\n\n" + "—" * 12 + "\n\n"
+    return separator.join(blocks)
