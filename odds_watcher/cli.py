@@ -34,6 +34,7 @@ REQUIRED_CREDENTIALS = {
     "bookmakers": ("ODDS_API_KEY",),
     "leagues": ("ODDS_API_KEY",),
     "probe": ("ODDS_API_KEY",),
+    "markets": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -48,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "leagues", "probe", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "leagues", "markets", "probe", "chat-id", "status"],
     )
     parser.add_argument(
         "--search",
@@ -314,6 +315,58 @@ def cmd_status(config: Config) -> int:
     return 0
 
 
+MARKET_SAMPLE_SIZE = 10
+
+
+def cmd_markets(config: Config, search: Optional[str] = None) -> int:
+    """List every market name the configured books offer on upcoming fixtures.
+
+    Market availability varies by fixture — corners and bookings markets often
+    only exist on bigger games — so this samples several fixtures at once, in a
+    single batched request, and reports which books priced each market.
+    """
+    from .odds_api import market_catalogue
+
+    store, _, api, _ = _components(config)
+    catalogue: dict = {}
+    try:
+        now = now_ts()
+        events = api.get_events(config.sports[0])
+        upcoming = sorted(
+            (e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts
+        )[:MARKET_SAMPLE_SIZE]
+        if not upcoming:
+            print("no upcoming fixtures to sample", file=sys.stderr)
+            return 1
+        payload = api.get_multi_odds_raw([e.id for e in upcoming], config.bookmakers)
+        for name, books in market_catalogue(payload).items():
+            entry = catalogue.setdefault(name, {})
+            for book, count in books.items():
+                entry[book] = entry.get(book, 0) + count
+    except TransportError as exc:
+        print(f"✗ could not list markets: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+    rows = sorted(catalogue.items())
+    if search:
+        needle = search.lower()
+        rows = [row for row in rows if needle in row[0].lower()]
+    if not rows:
+        print(f"no markets matching {search!r}", file=sys.stderr)
+        return 1
+
+    width = max(len(name) for name, _ in rows)
+    print(f"markets seen across the next {len(upcoming)} fixture(s):\n")
+    for name, books in rows:
+        offered = ", ".join(f"{book} ({count})" for book, count in sorted(books.items()))
+        print(f"  {name.ljust(width)}  {offered}")
+    print(f"\n{len(rows)} market(s). Put the names in MARKETS in your .env.")
+    print("Matching is case-insensitive substring; prefix with - to exclude, e.g. Totals,-HT")
+    return 0
+
+
 def cmd_probe(config: Config) -> int:
     """Fetch odds for the next fixture and show exactly what came back.
 
@@ -409,6 +462,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_leagues(config, args.search)
     if args.command == "probe":
         return cmd_probe(config)
+    if args.command == "markets":
+        return cmd_markets(config, args.search)
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "status":

@@ -314,3 +314,13 @@ def test_live_payload_reads_the_market_timestamp():
 
 def test_live_payload_event_id_is_stable():
     assert {q.event_id for q in parse_quotes(_live_payload())} == {"73895004"}
+
+
+def test_market_catalogue_counts_prices_per_book():
+    from odds_watcher.odds_api import market_catalogue
+
+    catalogue = market_catalogue(_live_payload())
+    assert catalogue["ML"] == {"bet365": 3, "betano": 3}
+    assert catalogue["Totals"] == {"bet365": 2, "betano": 2}
+    assert catalogue["Alternative Asian Handicap"] == {"bet365": 4}
+    assert "urls" not in catalogue  # non-market keys must not leak in

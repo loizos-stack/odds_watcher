@@ -300,6 +300,27 @@ def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> lis
     return quotes
 
 
+def market_catalogue(payload: Any) -> dict:
+    """``{market name: {bookmaker: number of prices}}`` for a raw odds payload.
+
+    Read from the payload structure rather than from parsed quotes, so a market
+    still shows up in the listing even if its prices fail to parse.
+    """
+    catalogue: dict = {}
+    for block in _as_list(payload):
+        if not isinstance(block, dict):
+            continue
+        for hint, markets in _bookmaker_sections(block):
+            for market_name, market_node in _market_nodes(markets):
+                prices = sum(1 for _ in _iter_market_prices(market_node))
+                if not prices:
+                    continue
+                entry = catalogue.setdefault(str(market_name), {})
+                book = hint or "?"
+                entry[book] = entry.get(book, 0) + prices
+    return catalogue
+
+
 class OddsApiClient:
     """Thin, budget-aware wrapper around the odds-api.io endpoints."""
 
@@ -347,6 +368,13 @@ class OddsApiClient:
     def get_event_odds(self, event_id: str, bookmakers: Sequence[str]) -> list[Quote]:
         payload = self.get_event_odds_raw(event_id, bookmakers)
         return parse_quotes(payload, default_event_id=event_id)
+
+    def get_multi_odds_raw(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> Any:
+        """The undecoded /odds/multi payload, for diagnostics and discovery."""
+        return self._call(
+            "odds/multi",
+            {"eventIds": ",".join(event_ids), "bookmakers": ",".join(bookmakers)},
+        )
 
     def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> list[Quote]:
         """Odds for several events in a single request.

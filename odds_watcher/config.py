@@ -91,6 +91,7 @@ class Config:
     sports: tuple[str, ...] = ("football",)
     leagues: tuple[str, ...] = ()
     markets: tuple[str, ...] = ()  # empty == every market the API returns
+    outcomes: tuple[str, ...] = ()  # empty == every outcome, e.g. ("over", "under")
 
     # --- when an alert may fire -----------------------------------------
     # The alert window is [window_end_seconds, window_start_seconds] before
@@ -180,6 +181,7 @@ class Config:
             sports=_csv(env.get("SPORTS", "football")) or ("football",),
             leagues=_csv(env.get("LEAGUES", "")),
             markets=_csv(env.get("MARKETS", "")),
+            outcomes=_csv(env.get("OUTCOMES", "")),
             window_start_seconds=window_start,
             window_end_seconds=window_end,
             baseline_lead_seconds=baseline_lead,

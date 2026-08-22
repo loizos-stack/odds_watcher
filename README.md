@@ -98,6 +98,7 @@ python -m odds_watcher once                # single poll (for cron)
 python -m odds_watcher status              # tracked lines + remaining budget
 python -m odds_watcher bookmakers          # valid bookmaker identifiers
 python -m odds_watcher leagues --search x  # valid league identifiers
+python -m odds_watcher markets             # market names the books actually offer
 python -m odds_watcher probe               # show the prices actually returned
 ```
 
@@ -154,7 +155,8 @@ Every setting is an environment variable, documented in
 | `BOOKMAKERS` | `bet365,betano` | Books to watch (free tier allows 2) |
 | `SPORTS` | `football` | Comma-separated sports to follow |
 | `LEAGUES` | *(all)* | Restrict to specific league slugs |
-| `MARKETS` | *(all)* | e.g. `ML` for match result; substring match |
+| `MARKETS` | *(all)* | e.g. `Totals,Corner,-HT`; substring, `-` excludes |
+| `OUTCOMES` | *(all)* | e.g. `over,under` to watch totals only |
 | `WINDOW_START_SECONDS` | `600` | Window opens 10 min before kick-off |
 | `WINDOW_END_SECONDS` | `0` | Window closes at kick-off |
 | `BASELINE_LEAD_SECONDS` | `900` | Start recording prices 15 min out |
@@ -184,6 +186,26 @@ tests/          72 unit tests, no network access required
 pip install -r requirements.txt
 python -m pytest -q
 ```
+
+## Watching totals
+
+Totals markets need two filters, because market naming varies and a market
+matched by name may still carry rows you do not want:
+
+```bash
+MARKETS=Totals,Corner,Booking,Card,-HT,-Handicap,-First
+OUTCOMES=over,under
+```
+
+`MARKETS` selects by substring and `-` excludes, so this keeps `Totals`,
+`Corners Over/Under` and `Bookings Over/Under` while dropping `Totals HT`,
+`Corners Handicap` and `First Corner`. `OUTCOMES` then keeps only the over and
+under prices. Run `python -m odds_watcher markets` first — it samples the next
+ten fixtures in one request and prints every market name with the books that
+priced it, since corners and bookings markets often exist only on bigger games.
+
+Each handicap line is tracked separately, so Over 2.5 and Over 3.5 never share
+a baseline.
 
 ## The odds payload
 

@@ -122,3 +122,77 @@ def test_market_filter():
     assert market_allowed("moneyline", ("moneyline",))
     assert market_allowed("Asian Handicap", ("handicap",))
     assert not market_allowed("totals", ("moneyline",))
+
+
+def test_market_exclusions():
+    """`-` entries exclude, so full-time totals can be kept without the HT ones."""
+    wanted = ("Totals", "Corner", "Booking", "-HT")
+    assert market_allowed("Totals", wanted)
+    assert market_allowed("Corner Totals", wanted)
+    assert market_allowed("Bookings Over/Under", wanted)
+    assert not market_allowed("Totals HT", wanted)
+    assert not market_allowed("ML", wanted)
+
+
+def test_exclusions_only_means_everything_else():
+    assert market_allowed("Totals", ("-HT",))
+    assert not market_allowed("Totals HT", ("-HT",))
+
+
+def test_outcome_filter_keeps_over_under_only():
+    from odds_watcher.detector import outcome_allowed
+
+    assert outcome_allowed("over", ("over", "under"))
+    assert outcome_allowed("Under", ("over", "under"))
+    assert not outcome_allowed("home", ("over", "under"))
+    assert outcome_allowed("home", ())  # unset means no restriction
+
+
+def test_totals_config_ignores_the_handicap_side_of_a_matching_market(config, store):
+    """A market named ...Totals may still carry home/away rows; OUTCOMES filters them."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, markets=("Totals",), outcomes=("over", "under"))
+    detector = DropDetector(cfg, store)
+
+    over = Quote("e1", "bet365", "Corner Totals", "9.5", "over", 2.00)
+    home = Quote("e1", "bet365", "Corner Totals", "9.5", "home", 2.00)
+    detector.process(EVENT, [over, home], at(20))
+
+    alerts = detector.process(
+        EVENT,
+        [
+            Quote("e1", "bet365", "Corner Totals", "9.5", "over", 1.75),
+            Quote("e1", "bet365", "Corner Totals", "9.5", "home", 1.75),
+        ],
+        at(5),
+    )
+    assert [a.quote.outcome for a in alerts] == ["over"]
+
+
+def test_totals_lines_are_tracked_separately(config, store):
+    """Over 2.5 and Over 3.5 are different bets and must not share a baseline."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, markets=("Totals",), outcomes=("over", "under"))
+    detector = DropDetector(cfg, store)
+
+    detector.process(
+        EVENT,
+        [
+            Quote("e1", "bet365", "Totals", "2.5", "over", 1.90),
+            Quote("e1", "bet365", "Totals", "3.5", "over", 3.20),
+        ],
+        at(20),
+    )
+    alerts = detector.process(
+        EVENT,
+        [
+            Quote("e1", "bet365", "Totals", "2.5", "over", 1.90),
+            Quote("e1", "bet365", "Totals", "3.5", "over", 2.80),
+        ],
+        at(5),
+    )
+    assert len(alerts) == 1
+    assert alerts[0].quote.line == "3.5"
+    assert alerts[0].reference_odds == 3.20

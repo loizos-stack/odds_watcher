@@ -46,10 +46,29 @@ def drop_pct(reference: float, current: float) -> float:
 
 
 def market_allowed(market: str, wanted: Sequence[str]) -> bool:
+    """Case-insensitive substring match, with exclusions.
+
+    An entry prefixed with ``-`` or ``!`` excludes: ``Totals,-HT`` keeps
+    "Totals" and "Corner Totals" but drops "Totals HT". Exclusions win, and a
+    config of exclusions only means "everything except these".
+    """
+    name = market.strip().lower()
+    includes = [w.strip().lower() for w in wanted if not w.startswith(("-", "!"))]
+    excludes = [w.strip("-!").strip().lower() for w in wanted if w.startswith(("-", "!"))]
+
+    if any(pattern and pattern in name for pattern in excludes):
+        return False
+    if not includes:
+        return True
+    return any(pattern == name or pattern in name for pattern in includes)
+
+
+def outcome_allowed(outcome: str, wanted: Sequence[str]) -> bool:
+    """Restrict which sides may alert, e.g. OUTCOMES=over,under for totals."""
     if not wanted:
         return True
-    name = market.strip().lower()
-    return any(w.lower() == name or w.lower() in name for w in wanted)
+    name = outcome.strip().lower()
+    return any(w.strip().lower() == name for w in wanted)
 
 
 class DropDetector:
@@ -62,6 +81,7 @@ class DropDetector:
         return (
             quote.bookmaker in self.bookmakers
             and market_allowed(quote.market, self.config.markets)
+            and outcome_allowed(quote.outcome, self.config.outcomes)
             and quote.odds >= self.config.min_odds
         )
 
