@@ -182,3 +182,32 @@ def test_cli_command_credential_requirements_are_satisfiable():
         required = REQUIRED_CREDENTIALS.get(command, ALL_CREDENTIALS)
         env = {name: "value" for name in required}
         assert Config.from_env(env, required=required) is not None
+
+
+def test_budget_warning_fires_when_the_slate_is_too_wide(config, capsys):
+    """A wide slate must be flagged at setup, not discovered at 3am."""
+    import dataclasses
+
+    from odds_watcher.cli import _report_budget_fit
+
+    now = 1_000_000.0
+    wide = [
+        Event(id=str(i), start_ts=now + 600 + i, home=f"H{i}", away="A") for i in range(40)
+    ]
+    _report_budget_fit(config, wide, now)
+    out = capsys.readouterr().out
+    assert "40 fixture(s)" in out
+    assert "over your 90/hour cap" in out
+
+    narrow = wide[:10]
+    _report_budget_fit(dataclasses.replace(config), narrow, now)
+    assert "over your" not in capsys.readouterr().out
+
+
+def test_budget_warning_ignores_fixtures_outside_the_lead(config, capsys):
+    from odds_watcher.cli import _report_budget_fit
+
+    now = 1_000_000.0
+    distant = [Event(id=str(i), start_ts=now + 6 * 3600, home=f"H{i}", away="A") for i in range(50)]
+    _report_budget_fit(config, distant, now)
+    assert "0 fixture(s)" in capsys.readouterr().out

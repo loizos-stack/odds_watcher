@@ -98,3 +98,10 @@ def test_missing_chat_id_alone_points_at_the_chat_id_command():
 
 def test_status_needs_no_credentials_at_all():
     assert Config.from_env({}, required=()).bookmakers == ("bet365", "betano")
+
+
+def test_bookmakers_command_needs_only_the_api_key():
+    from odds_watcher.cli import REQUIRED_CREDENTIALS
+
+    assert REQUIRED_CREDENTIALS["bookmakers"] == ("ODDS_API_KEY",)
+    assert Config.from_env({"ODDS_API_KEY": "k"}, required=("ODDS_API_KEY",)) is not None

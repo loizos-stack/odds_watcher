@@ -66,12 +66,20 @@ Find your chat id (after messaging the bot at least once) and put it in `.env`:
 python -m odds_watcher chat-id
 ```
 
-### 3. Bind the account to bet365 + betano and verify
+### 3. Find the bookmaker identifiers and bind the account
+
+The API uses its own identifiers, which are not always the obvious lowercase
+name — list them first and put the left-hand column in `BOOKMAKERS`:
 
 ```bash
+python -m odds_watcher bookmakers --search bet
 python -m odds_watcher select-bookmakers   # uses BOOKMAKERS from .env
 python -m odds_watcher check               # sends a test message, lists fixtures
 ```
+
+`check` also reports how many fixtures sit inside the tracking lead right now
+and whether that fits your hourly request budget — heed it, a wide slate will
+exhaust the free tier.
 
 ### 4. Run
 
@@ -80,6 +88,7 @@ python -m odds_watcher run                 # daemon: polls and alerts
 python -m odds_watcher run --dry-run       # detect and log, send nothing
 python -m odds_watcher once                # single poll (for cron)
 python -m odds_watcher status              # tracked lines + remaining budget
+python -m odds_watcher bookmakers          # valid bookmaker identifiers
 ```
 
 There are no runtime dependencies — Python 3.9+ standard library only.
@@ -154,8 +163,8 @@ odds_watcher/
   detector.py   the drop rule (pure logic, no I/O)
   telegram.py   Bot API client and message formatting
   watcher.py    polling loop and scheduling
-  cli.py        run / once / check / select-bookmakers / chat-id / status
-tests/          53 unit tests, no network access required
+  cli.py        run / once / check / bookmakers / select-bookmakers / chat-id / status
+tests/          67 unit tests, no network access required
 ```
 
 ## Tests

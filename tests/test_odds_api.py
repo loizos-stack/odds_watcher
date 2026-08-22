@@ -199,3 +199,20 @@ def test_http_errors_are_transport_errors_and_redacted():
     error = HttpError(500, "boom", "https://api2.odds-api.io/v3/odds?apiKey=SUPERSECRET&eventId=1")
     assert isinstance(error, TransportError)
     assert "SUPERSECRET" not in str(error)
+
+
+def test_get_bookmakers_handles_string_and_object_rows(monkeypatch):
+    monkeypatch.setattr(
+        "odds_watcher.odds_api.request_json",
+        lambda url, **k: [
+            {"id": "bet365_uk", "name": "Bet365"},
+            {"slug": "betano_pt", "title": "Betano"},
+            "pinnacle",
+            {"nonsense": 1},  # unusable row is skipped, not fatal
+        ],
+    )
+    rows = OddsApiClient("secret").get_bookmakers()
+    assert ("bet365_uk", "Bet365") in rows
+    assert ("betano_pt", "Betano") in rows
+    assert ("pinnacle", "pinnacle") in rows
+    assert len(rows) == 3

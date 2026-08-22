@@ -14,6 +14,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 from .config import ALL_CREDENTIALS, Config, ConfigError, load_dotenv
 from .detector import Alert
@@ -30,6 +31,7 @@ log = logging.getLogger("odds_watcher")
 # Each command only demands the credentials it actually uses.
 REQUIRED_CREDENTIALS = {
     "chat-id": ("TELEGRAM_BOT_TOKEN",),
+    "bookmakers": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -44,7 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "chat-id", "status"],
+    )
+    parser.add_argument(
+        "--search",
+        default=None,
+        help="filter the `bookmakers` listing, e.g. --search bet",
     )
     parser.add_argument("--env-file", default=".env", help="path to the .env file (default: .env)")
     parser.add_argument("--log-level", default=None, help="override LOG_LEVEL")
@@ -131,13 +138,20 @@ def cmd_check(config: Config) -> int:
         print(f"✗ odds-api.io: {exc}", file=sys.stderr)
 
     try:
+        now = now_ts()
         events = api.get_events(config.sports[0])
-        print(f"✓ {len(events)} upcoming {config.sports[0]} event(s) visible")
-        for event in events[:5]:
+        upcoming = sorted(
+            (e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts
+        )
+        print(f"✓ {len(events)} {config.sports[0]} event(s) returned, {len(upcoming)} still upcoming")
+        for event in upcoming[:5]:
             print(
                 f"   · {event.name} — {format_clock(event.start_ts)} "
-                f"(in {format_countdown(event.seconds_to_start(now_ts()))})"
+                f"(starts in {format_countdown(event.seconds_to_start(now))})"
             )
+        if not upcoming:
+            print("! nothing upcoming — check the SPORTS/LEAGUES slugs", file=sys.stderr)
+        _report_budget_fit(config, upcoming, now)
     except TransportError as exc:
         ok = False
         print(f"✗ events endpoint: {exc}", file=sys.stderr)
@@ -148,6 +162,77 @@ def cmd_check(config: Config) -> int:
     return 0 if ok else 1
 
 
+def cmd_bookmakers(config: Config, search: Optional[str] = None) -> int:
+    """List the identifiers /bookmakers/selected/select will accept."""
+    store, _, api, _ = _components(config)
+    try:
+        rows = api.get_bookmakers()
+    except TransportError as exc:
+        print(f"✗ could not list bookmakers: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+    if search:
+        needle = search.lower()
+        rows = [row for row in rows if needle in row[0].lower() or needle in row[1].lower()]
+    if not rows:
+        print(f"no bookmakers matching {search!r}", file=sys.stderr)
+        return 1
+    width = max(len(identifier) for identifier, _ in rows)
+    for identifier, label in rows:
+        print(f"{identifier.ljust(width)}  {label}")
+    print(f"\n{len(rows)} bookmaker(s). Put the left-hand identifiers in BOOKMAKERS in your .env.")
+    return 0
+
+
+def _suggest_bookmakers(api, wanted: tuple) -> None:
+    """After a rejected selection, show identifiers that look like what was asked for."""
+    try:
+        rows = api.get_bookmakers()
+    except TransportError:
+        return
+    for name in wanted:
+        needle = name.lower()
+        matches = [i for i, label in rows if needle in i.lower() or needle in label.lower()]
+        if matches:
+            print(f"  did you mean, for {name!r}: {', '.join(matches[:8])}")
+        else:
+            print(f"  nothing resembling {name!r} in the bookmaker list")
+
+
+def _report_budget_fit(config: Config, upcoming: list, now: float) -> None:
+    """Warn if the current slate would out-poll the free tier's allowance.
+
+    Every poll spends one request per 20 fixtures inside the tracking lead, so
+    a wide slate silently exhausts the hourly budget. Better to say so here
+    than to have the watcher start skipping polls overnight.
+    """
+    import math
+
+    from .watcher import EVENTS_PER_ODDS_REQUEST
+
+    in_range = [
+        event
+        for event in upcoming
+        if config.window_end_seconds <= event.seconds_to_start(now) <= config.baseline_lead_seconds
+    ]
+    polls_per_hour = 3600 / config.poll_interval_seconds
+    per_poll = math.ceil(len(in_range) / EVENTS_PER_ODDS_REQUEST) if in_range else 0
+    hourly = int(per_poll * polls_per_hour)
+
+    print(f"· {len(in_range)} fixture(s) inside the {config.baseline_lead_seconds // 60}-min tracking lead right now")
+    if hourly > config.max_requests_per_hour:
+        print(
+            f"! at this rate that is ~{hourly} requests/hour, over your "
+            f"{config.max_requests_per_hour}/hour cap.\n"
+            f"  Narrow LEAGUES, or raise POLL_INTERVAL_SECONDS to "
+            f"{math.ceil(3600 * per_poll / config.max_requests_per_hour)}+."
+        )
+    elif hourly:
+        print(f"· ~{hourly} requests/hour at the current poll interval (cap {config.max_requests_per_hour})")
+
+
 def cmd_select_bookmakers(config: Config) -> int:
     store, _, api, _ = _components(config)
     try:
@@ -156,6 +241,9 @@ def cmd_select_bookmakers(config: Config) -> int:
         return 0
     except TransportError as exc:
         print(f"✗ could not select bookmakers: {exc}", file=sys.stderr)
+        print("\nThe identifiers in BOOKMAKERS are not the ones this API uses.")
+        _suggest_bookmakers(api, config.bookmakers)
+        print("\nFull list: py -m odds_watcher bookmakers --search bet")
         return 1
     finally:
         store.close()
@@ -227,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_check(config)
     if args.command == "select-bookmakers":
         return cmd_select_bookmakers(config)
+    if args.command == "bookmakers":
+        return cmd_bookmakers(config, args.search)
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "status":

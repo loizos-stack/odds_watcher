@@ -332,6 +332,25 @@ class OddsApiClient:
             quotes.extend(self.get_event_odds(event_id, bookmakers))
         return quotes
 
+    def get_bookmakers(self) -> list[tuple[str, str]]:
+        """All bookmakers the API knows, as ``(identifier, display name)``.
+
+        The identifier is what /bookmakers/selected/select expects, and it is
+        not always the obvious lowercase name — hence this listing.
+        """
+        payload = self._call("bookmakers")
+        rows: list[tuple[str, str]] = []
+        for item in _as_list(payload):
+            if isinstance(item, str):
+                rows.append((item, item))
+            elif isinstance(item, dict):
+                identifier = _first(item, "id", "slug", "key", "bookmaker", "name", default=None)
+                if identifier is None:
+                    continue
+                label = str(_first(item, "name", "title", "slug", default=identifier))
+                rows.append((str(identifier), label))
+        return sorted(set(rows))
+
     def get_selected_bookmakers(self) -> list[str]:
         payload = self._call("bookmakers/selected")
         names: list[str] = []
