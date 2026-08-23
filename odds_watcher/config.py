@@ -103,7 +103,7 @@ class Config:
     # clear the window by a couple of polls — a longer lead spends the request
     # budget on prices that are thrown away.
     baseline_lead_seconds: int = 1200
-    min_drop_pct: float = 10.0
+    min_drop_pct: float = 2.0
     # How the reference price is chosen:
     #   "window-entry" - the last price before the alert window opens; only
     #                    movement inside the window can alert.
@@ -259,7 +259,7 @@ class Config:
             window_start_seconds=window_start,
             window_end_seconds=window_end,
             baseline_lead_seconds=baseline_lead,
-            min_drop_pct=_get_float(env, "MIN_DROP_PCT", 10.0, minimum=0.1),
+            min_drop_pct=_get_float(env, "MIN_DROP_PCT", 2.0, minimum=0.1),
             baseline_mode=baseline_mode,
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
