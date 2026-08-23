@@ -137,6 +137,7 @@ class Config:
     # How long a discovered market-key set stays usable before it is re-probed.
     market_keys_ttl_seconds: int = 86400
     the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
+    parlay_api_base_url: str = "https://parlay-api.com"
 
     # --- plumbing --------------------------------------------------------
     # Fetch odds one fixture at a time instead of batching. Player props are
@@ -187,9 +188,10 @@ class Config:
             )
 
         provider = env.get("ODDS_PROVIDER", "odds-api-io").strip().lower()
-        if provider not in ("odds-api-io", "the-odds-api"):
+        if provider not in ("odds-api-io", "the-odds-api", "parlay-api"):
             raise ConfigError(
-                f"ODDS_PROVIDER must be 'odds-api-io' or 'the-odds-api', got {provider!r}"
+                "ODDS_PROVIDER must be one of 'odds-api-io', 'the-odds-api', "
+                f"'parlay-api', got {provider!r}"
             )
 
         baseline_mode = env.get("BASELINE_MODE", "window-entry").strip().lower()
@@ -260,6 +262,9 @@ class Config:
             featured_markets=_csv(env.get("FEATURED_MARKETS", "")) or ("h2h", "spreads", "totals"),
             prop_markets=_csv(env.get("PROP_MARKETS", "")),
             market_keys_ttl_seconds=_get_int(env, "MARKET_KEYS_TTL_SECONDS", 86400, minimum=600),
+            parlay_api_base_url=env.get(
+                "PARLAY_API_BASE_URL", "https://parlay-api.com"
+            ).rstrip("/"),
             the_odds_api_base_url=env.get(
                 "THE_ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"
             ).rstrip("/"),

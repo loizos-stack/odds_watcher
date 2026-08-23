@@ -8,13 +8,23 @@ from __future__ import annotations
 
 from .config import Config
 from .odds_api import OddsApiClient
+from .parlayapi import ParlayApiClient
 from .theoddsapi import TheOddsApiClient
 
-PROVIDERS = ("odds-api-io", "the-odds-api")
+PROVIDERS = ("odds-api-io", "the-odds-api", "parlay-api")
 
 
 def build_client(config: Config, budget=None, market_cache=None):
     """Construct the client for ``ODDS_PROVIDER``."""
+    if config.odds_provider == "parlay-api":
+        return ParlayApiClient(
+            config.odds_api_key,
+            base_url=config.parlay_api_base_url,
+            timeout=config.request_timeout_seconds,
+            budget=budget,
+            prop_markets=config.prop_markets,
+            default_sport=config.sports[0] if config.sports else "",
+        )
     if config.odds_provider == "the-odds-api":
         return TheOddsApiClient(
             config.odds_api_key,

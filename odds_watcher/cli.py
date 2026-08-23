@@ -687,6 +687,8 @@ def _parsers(config: Config):
     """
     if config.odds_provider == "the-odds-api":
         from . import theoddsapi as provider
+    elif config.odds_provider == "parlay-api":
+        from . import parlayapi as provider
     else:
         from . import odds_api as provider
     return provider.parse_quotes, provider.market_catalogue

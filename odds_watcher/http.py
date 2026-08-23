@@ -19,6 +19,7 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 _SECRET_PATTERNS = (
     re.compile(r"(apiKey=)[^&\s]+", re.IGNORECASE),
+    re.compile(r"(api_key=)[^&\s]+", re.IGNORECASE),
     re.compile(r"(/bot)[^/\s]+"),
 )
 
@@ -63,6 +64,7 @@ def request_json_with_headers(
     retries: int = 3,
     backoff: float = 2.0,
     sleep=time.sleep,
+    headers: Optional[Mapping[str, str]] = None,
 ) -> tuple:
     """Like :func:`request_json`, but also returns the response headers.
 
@@ -77,6 +79,7 @@ def request_json_with_headers(
         retries=retries,
         backoff=backoff,
         sleep=sleep,
+        headers=headers,
     )
 
 
@@ -89,6 +92,7 @@ def request_json(
     retries: int = 3,
     backoff: float = 2.0,
     sleep=time.sleep,
+    headers: Optional[Mapping[str, str]] = None,
 ) -> Any:
     """Perform a request and decode the JSON body."""
     data, _headers = _request(
@@ -99,6 +103,7 @@ def request_json(
         retries=retries,
         backoff=backoff,
         sleep=sleep,
+        headers=headers,
     )
     return data
 
@@ -112,6 +117,7 @@ def _request(
     retries: int = 3,
     backoff: float = 2.0,
     sleep=time.sleep,
+    headers: Optional[Mapping[str, str]] = None,
 ) -> tuple:
     """Perform a request and decode the JSON body.
 
@@ -120,19 +126,19 @@ def _request(
     real error instead of hammering the API.
     """
     body = None
-    headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
+    request_headers = {"Accept": "application/json", "User-Agent": USER_AGENT, **(headers or {})}
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
+        request_headers["Content-Type"] = "application/json"
 
     last_error: Optional[Exception] = None
     for attempt in range(1, retries + 1):
-        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        req = urllib.request.Request(url, data=body, headers=request_headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read().decode("utf-8", errors="replace")
-                headers = {k.lower(): v for k, v in resp.headers.items()}
-            return (json.loads(raw) if raw.strip() else None), headers
+                response_headers = {k.lower(): v for k, v in resp.headers.items()}
+            return (json.loads(raw) if raw.strip() else None), response_headers
         except urllib.error.HTTPError as exc:  # noqa: PERF203 - retry loop
             raw = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
             error = (

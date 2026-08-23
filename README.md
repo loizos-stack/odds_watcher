@@ -360,10 +360,11 @@ raising once you see real volume — calibrate with `run --dry-run`.
 `ODDS_PROVIDER` selects the odds source. Everything downstream — drop
 detection, storage, alerting — is identical either way.
 
-| | `odds-api-io` | `the-odds-api` |
-| --- | --- | --- |
-| Base URL | `api2.odds-api.io/v3` | `api.the-odds-api.com/v4` |
-| Metering | per request | **credits = markets × regions, per call** |
+| | `odds-api-io` | `the-odds-api` | `parlay-api` |
+| --- | --- | --- | --- |
+| Base URL | `api2.odds-api.io/v3` | `api.the-odds-api.com/v4` | `parlay-api.com/v1` |
+| Auth | `apiKey` query param | `api_key` query param | `X-API-Key` header |
+| Metering | per request | **credits = markets × regions, per call** | per request |
 | Bookmakers | selected on the account (2 on free) | chosen per request, via `REGIONS`/`BOOKMAKERS` |
 | Featured markets | all markets in one batched call | one call per sport (`h2h,spreads,totals`) |
 | Player props | in the same payload | **per fixture only**, charged per fixture |
