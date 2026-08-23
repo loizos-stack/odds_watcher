@@ -151,8 +151,17 @@ docker run -d --name odds-watcher --env-file .env -v odds-data:/data odds-watche
 **Windows** — start a dry run at a set time, or register a scheduled task:
 
 ```powershell
-.\scripts\dry-run.ps1 -At "20:10"            # waits in the console, then runs
-.\scripts\schedule-dry-run.ps1 -At "20:10"   # survives the console closing
+.\scripts\dry-run.cmd 20:10            # waits in the console, then runs
+.\scripts\schedule-dry-run.cmd 20:10   # survives the console closing
+```
+
+Use the `.cmd` wrappers: Windows blocks unsigned `.ps1` files by default, and
+these invoke PowerShell with `-ExecutionPolicy Bypass` for that one call rather
+than asking you to loosen the machine's policy. The `.ps1` files can be run
+directly if your policy already permits it, or after:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
 The machine has to be awake at that time; sleep delays the task rather than
