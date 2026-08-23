@@ -892,3 +892,31 @@ def test_movements_explains_stranded_lines(config, capsys, monkeypatch, tmp_path
     assert "no pre-window price" in out
     assert "cannot signal" in out
     assert "BASELINE_MODE=first-seen" in out
+
+
+def test_movements_does_not_claim_stranded_lines_in_first_seen_mode(config, capsys,
+                                                                    monkeypatch, tmp_path):
+    """first-seen takes the first price as the reference, so nothing is stranded."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.odds_api import Quote
+    from odds_watcher.store import RequestBudget, Store
+
+    store = Store(tmp_path / "firstseen.db")
+    store.record(Quote("e1", "dk", "batter_home_runs", "0.5", "Judge Over", 3.60),
+                 pre_window=False, event_start=1000, ts=1, event_name="A vs B")
+    store.record(Quote("e1", "dk", "batter_home_runs", "0.5", "Judge Over", 2.50),
+                 pre_window=False, event_start=1000, ts=2)
+    store.mark_alerted(Quote("e1", "dk", "batter_home_runs", "0.5", "Judge Over", 2.50), ts=2)
+
+    monkeypatch.setattr(
+        cli, "_components", lambda c: (store, RequestBudget(store, 100, 100), None, None)
+    )
+    cli.cmd_movements(dataclasses.replace(config, baseline_mode="first-seen"))
+
+    out = capsys.readouterr().out
+    assert "every tracked line can signal" in out
+    assert "no pre-window price" not in out
+    assert "cannot signal" not in out
+    assert "SIGNALLED" in out

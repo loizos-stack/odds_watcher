@@ -527,10 +527,17 @@ def cmd_movements(config: Config, limit: int = 25) -> int:
 
     biggest = (summary.get("biggest_drop") or 0) * 100
     alertable = summary.get("alertable") or 0
+    # A pre-window reference only matters to window-entry; the other modes take
+    # the first or previous price and can signal without one.
+    needs_pre_window = config.baseline_mode == "window-entry"
     print(f"{tracked} tracked line(s): {summary.get('fell') or 0} fell, "
           f"{summary.get('rose') or 0} rose, {summary.get('flat') or 0} unchanged")
     print(f"largest drop recorded: {biggest:.2f}%   (your threshold: {config.min_drop_pct:.1f}%)")
-    print(f"{alertable} of {tracked} line(s) have a pre-window reference and can signal\n")
+    if needs_pre_window:
+        print(f"{alertable} of {tracked} line(s) have a pre-window reference and can signal")
+    else:
+        print(f"baseline mode: {config.baseline_mode} — every tracked line can signal")
+    print()
 
     width = min(max((len(r["event_name"] or r["event_id"]) for r in rows), default=10), 34)
     print(f"  {'fixture'.ljust(width)}  {'book':<12} {'market':<10} {'outcome':<18} "
@@ -541,14 +548,14 @@ def cmd_movements(config: Config, limit: int = 25) -> int:
         name = (row["event_name"] or row["event_id"])[:width]
         if row["alert_count"]:
             state = "SIGNALLED"
-        elif not row["baseline_pre_window"]:
+        elif needs_pre_window and not row["baseline_pre_window"]:
             state = "no pre-window price"
         else:
             state = ""
         print(f"  {name.ljust(width)}  {row['bookmaker'][:12]:<12} {row['market'][:10]:<10} "
               f"{row['outcome'][:18]:<18} {base:>7.2f} {last:>7.2f} {move:>7.2f}%  {state}")
 
-    stranded = summary.get("fell_unalertable") or 0
+    stranded = (summary.get("fell_unalertable") or 0) if needs_pre_window else 0
     if stranded:
         print(f"\n! {stranded} line(s) fell but cannot signal: their first recorded price was")
         print("  already inside the alert window, so there is no earlier price to compare")
