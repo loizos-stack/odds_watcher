@@ -864,3 +864,31 @@ def test_sport_hint_does_not_fire_on_every_sports_url(config, capsys, monkeypatc
 
     cli._sport_error(Listing(), dataclasses.replace(config, sports=("Baseball",)), slug_error)
     assert "slugs are lowercase" in capsys.readouterr().out
+
+
+def test_movements_explains_stranded_lines(config, capsys, monkeypatch, tmp_path):
+    """The report must name the reason a large drop produced no signal."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.odds_api import Quote
+    from odds_watcher.store import RequestBudget, Store
+
+    store = Store(tmp_path / "stranded.db")
+    q = Quote("e1", "bet365", "h2h", "", "Home", 3.00)
+    store.record(q, pre_window=False, event_start=1000, ts=1, event_name="C vs D")
+    store.record(Quote("e1", "bet365", "h2h", "", "Home", 2.40),
+                 pre_window=False, event_start=1000, ts=2)
+    store.commit()
+
+    monkeypatch.setattr(
+        cli, "_components",
+        lambda c: (store, RequestBudget(store, 100, 100), None, None),
+    )
+    assert cli.cmd_movements(dataclasses.replace(config, min_drop_pct=2.0)) == 0
+
+    out = capsys.readouterr().out
+    assert "0 of 1 line(s) have a pre-window reference" in out
+    assert "no pre-window price" in out
+    assert "cannot signal" in out
+    assert "BASELINE_MODE=first-seen" in out

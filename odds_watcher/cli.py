@@ -526,20 +526,35 @@ def cmd_movements(config: Config, limit: int = 25) -> int:
         return 1
 
     biggest = (summary.get("biggest_drop") or 0) * 100
+    alertable = summary.get("alertable") or 0
     print(f"{tracked} tracked line(s): {summary.get('fell') or 0} fell, "
           f"{summary.get('rose') or 0} rose, {summary.get('flat') or 0} unchanged")
-    print(f"largest drop recorded: {biggest:.2f}%   (your threshold: {config.min_drop_pct:.1f}%)\n")
+    print(f"largest drop recorded: {biggest:.2f}%   (your threshold: {config.min_drop_pct:.1f}%)")
+    print(f"{alertable} of {tracked} line(s) have a pre-window reference and can signal\n")
 
     width = min(max((len(r["event_name"] or r["event_id"]) for r in rows), default=10), 34)
     print(f"  {'fixture'.ljust(width)}  {'book':<12} {'market':<10} {'outcome':<18} "
-          f"{'from':>7} {'to':>7} {'move':>8}")
+          f"{'from':>7} {'to':>7} {'move':>8}  state")
     for row in rows:
         base, last = row["baseline_odds"], row["last_odds"]
         move = (last - base) / base * 100 if base else 0
         name = (row["event_name"] or row["event_id"])[:width]
-        flag = " *" if row["alert_count"] else ""
+        if row["alert_count"]:
+            state = "SIGNALLED"
+        elif not row["baseline_pre_window"]:
+            state = "no pre-window price"
+        else:
+            state = ""
         print(f"  {name.ljust(width)}  {row['bookmaker'][:12]:<12} {row['market'][:10]:<10} "
-              f"{row['outcome'][:18]:<18} {base:>7.2f} {last:>7.2f} {move:>7.2f}%{flag}")
+              f"{row['outcome'][:18]:<18} {base:>7.2f} {last:>7.2f} {move:>7.2f}%  {state}")
+
+    stranded = summary.get("fell_unalertable") or 0
+    if stranded:
+        print(f"\n! {stranded} line(s) fell but cannot signal: their first recorded price was")
+        print("  already inside the alert window, so there is no earlier price to compare")
+        print("  against. Start the watcher before fixtures reach "
+              f"T-{config.window_start_seconds // 60} min, or set BASELINE_MODE=first-seen,")
+        print("  which takes the first price seen as the reference.")
 
     if biggest < config.min_drop_pct:
         print(f"\n! nothing moved as far as {config.min_drop_pct:.1f}%. The largest drop was "

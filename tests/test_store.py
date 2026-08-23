@@ -225,3 +225,26 @@ def test_movement_report_survives_an_old_database(tmp_path):
     assert len(rows) == 1
     assert rows[0]["event_name"] == ""   # backfilled as empty, not a crash
     store.close()
+
+
+def test_movement_summary_counts_stranded_lines(store):
+    """A line first seen inside the window can never signal; say how many."""
+    alertable = Quote("e1", "bet365", "h2h", "", "Home", 2.00)
+    store.record(alertable, pre_window=True, event_start=1000, ts=1, event_name="A vs B")
+    store.record(Quote("e1", "bet365", "h2h", "", "Home", 1.80),
+                 pre_window=False, event_start=1000, ts=2)
+
+    stranded = Quote("e2", "bet365", "h2h", "", "Home", 3.00)
+    store.record(stranded, pre_window=False, event_start=1000, ts=1, event_name="C vs D")
+    store.record(Quote("e2", "bet365", "h2h", "", "Home", 2.40),
+                 pre_window=False, event_start=1000, ts=2)
+    store.commit()
+
+    summary = store.movement_summary()
+    assert summary["tracked"] == 2
+    assert summary["alertable"] == 1
+    assert summary["fell_unalertable"] == 1   # the -20% that can never fire
+
+    rows = {r["event_name"]: r for r in store.movements()}
+    assert rows["A vs B"]["baseline_pre_window"] == 1
+    assert rows["C vs D"]["baseline_pre_window"] == 0

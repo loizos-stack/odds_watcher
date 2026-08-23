@@ -214,7 +214,8 @@ class Store:
         """
         rows = self.conn.execute(
             """SELECT event_name, event_id, bookmaker, market, line, outcome,
-                      baseline_odds, last_odds, alert_count, event_start
+                      baseline_odds, last_odds, alert_count, event_start,
+                      baseline_pre_window
                FROM line_state
                WHERE event_start >= ? AND baseline_odds > 0
                ORDER BY (baseline_odds - last_odds) / baseline_odds DESC
@@ -231,7 +232,10 @@ class Store:
                  SUM(CASE WHEN last_odds < baseline_odds THEN 1 ELSE 0 END) AS fell,
                  SUM(CASE WHEN last_odds > baseline_odds THEN 1 ELSE 0 END) AS rose,
                  SUM(CASE WHEN last_odds = baseline_odds THEN 1 ELSE 0 END) AS flat,
-                 MAX((baseline_odds - last_odds) / baseline_odds) AS biggest_drop
+                 MAX((baseline_odds - last_odds) / baseline_odds) AS biggest_drop,
+                 SUM(baseline_pre_window) AS alertable,
+                 SUM(CASE WHEN baseline_pre_window = 0
+                          AND last_odds < baseline_odds THEN 1 ELSE 0 END) AS fell_unalertable
                FROM line_state WHERE event_start >= ? AND baseline_odds > 0""",
             (since_ts,),
         ).fetchone()
