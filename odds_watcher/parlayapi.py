@@ -353,26 +353,15 @@ class ParlayApiClient:
         return data
 
     def _read_allowance(self, data: Any, headers: dict) -> None:
-        """Record the remaining allowance from wherever the API reports it.
+        """Record the remaining monthly allowance.
 
-        Headers first, then the body: their demo response carries the figure as
-        a field (``demo_remaining_hour``) rather than a header, so an
-        authenticated response may do the same.
+        The body is preferred over headers. A rate-limit header reports
+        requests per second, not the account balance, and reading one as the
+        other understates a healthy account by an order of magnitude.
         """
-        for header in (
-            "x-ratelimit-remaining",
-            "x-requests-remaining",
-            "x-ratelimit-remaining-month",
-            "ratelimit-remaining",
-        ):
-            if header in headers:
-                try:
-                    self.credits_remaining = int(float(headers[header]))
-                    return
-                except (TypeError, ValueError):
-                    pass
         if isinstance(data, dict):
             for field in (
+                "credits_remaining",
                 "requests_remaining",
                 "remaining_requests",
                 "quota_remaining",
@@ -380,11 +369,20 @@ class ParlayApiClient:
                 "demo_remaining_hour",
             ):
                 if field in data:
-                    try:
-                        self.credits_remaining = int(float(data[field]))
+                    value = _int(data[field])
+                    if value is not None:
+                        self.credits_remaining = value
                         return
-                    except (TypeError, ValueError):
-                        pass
+        for header in (
+            "x-credits-remaining",
+            "x-requests-remaining",
+            "x-ratelimit-remaining-month",
+        ):
+            if header in headers:
+                value = _int(headers[header])
+                if value is not None:
+                    self.credits_remaining = value
+                    return
 
     def fetch_quota(self) -> dict:
         """The account's remaining allowance from the dedicated usage endpoint.
@@ -399,18 +397,21 @@ class ParlayApiClient:
         limit = None
         if isinstance(data, dict):
             body = data.get("usage") if isinstance(data.get("usage"), dict) else data
-            for field in ("remaining", "requests_remaining", "remaining_requests"):
+            for field in ("credits_remaining", "remaining", "requests_remaining",
+                          "remaining_requests"):
                 if field in body:
                     remaining = _int(body[field], remaining)
                     break
-            for field in ("used", "requests_used", "count"):
+            for field in ("credits_used", "used", "requests_used", "count"):
                 if field in body:
                     used = _int(body[field], used)
                     break
-            for field in ("limit", "quota", "monthly_limit", "requests_limit"):
+            for field in ("credits_total", "limit", "quota", "monthly_limit",
+                          "requests_limit"):
                 if field in body:
                     limit = _int(body[field], limit)
                     break
+            resets = body.get("period_end")
         if remaining is None and limit is not None and used is not None:
             remaining = limit - used
         self.credits_remaining = remaining
@@ -418,6 +419,7 @@ class ParlayApiClient:
             "remaining": remaining,
             "used": used,
             "limit": limit,
+            "resets": locals().get("resets"),
             "last_call": None,
             "raw": data,
         }

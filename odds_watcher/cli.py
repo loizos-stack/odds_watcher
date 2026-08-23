@@ -616,7 +616,13 @@ def cmd_usage(config: Config, check_balance: bool = False) -> int:
 
     if quota and quota.get("remaining") is not None:
         remaining = quota["remaining"]
-        print(f"\naccount credits: {remaining} remaining, {quota.get('used')} used")
+        limit = quota.get("limit")
+        used = quota.get("used")
+        total = f" of {limit}" if limit else ""
+        print(f"\naccount credits: {remaining} remaining{total}" +
+              (f", {used} used" if used is not None else ""))
+        if quota.get("resets"):
+            print(f"allowance resets: {quota['resets']}")
         if last_hour:
             hours = remaining / last_hour
             print(f"burn rate:       {last_hour}/hour -> about {hours:.1f} hour(s) of headroom")

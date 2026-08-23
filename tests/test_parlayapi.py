@@ -224,10 +224,11 @@ def test_event_blocks_are_not_mistaken_for_listings():
 
 
 def test_allowance_is_read_from_headers_or_body(monkeypatch):
-    """Their demo reports the figure in the body, not a header."""
+    """The body is authoritative; only quota headers are trusted, not throttles."""
     cases = [
-        (([], {"x-ratelimit-remaining": "873"}), 873),
-        (([], {"ratelimit-remaining": "500"}), 500),
+        (({"credits_remaining": 858, "events": []}, {}), 858),
+        (([], {"x-credits-remaining": "873"}), 873),
+        (([], {"x-requests-remaining": "500"}), 500),
         (({"requests_remaining": 412, "events": []}, {}), 412),
         (({"demo_remaining_hour": 59, "events": []}, {}), 59),
     ]
@@ -381,3 +382,31 @@ def test_usage_keeps_the_raw_reply(monkeypatch):
     assert quota["remaining"] == 60
     assert quota["raw"] == body
     assert quota["raw"]["period"] == "month"
+
+
+def test_rate_limit_is_never_read_as_the_account_balance(monkeypatch):
+    """rate_limit_per_sec is a throttle, not a balance; confusing them is severe."""
+    body = {
+        "credits_used": 142, "credits_remaining": 858, "credits_total": 1000,
+        "tier": "free", "period_end": "2026-09-01T00:00:00+00:00",
+        "plan": {"credits_per_month": 1000, "rate_limit_per_sec": 60},
+    }
+    monkeypatch.setattr(
+        "odds_watcher.parlayapi.request_json_with_headers",
+        lambda url, **kw: (body, {"x-ratelimit-remaining": "60"}),
+    )
+    quota = ParlayApiClient("k").fetch_quota()
+    assert quota["remaining"] == 858     # not 60
+    assert quota["used"] == 142
+    assert quota["limit"] == 1000
+    assert quota["resets"] == "2026-09-01T00:00:00+00:00"
+
+
+def test_body_wins_over_a_rate_limit_header(monkeypatch):
+    monkeypatch.setattr(
+        "odds_watcher.parlayapi.request_json_with_headers",
+        lambda url, **kw: ({"credits_remaining": 858}, {"x-ratelimit-remaining": "60"}),
+    )
+    client = ParlayApiClient("k")
+    client.get_events("baseball_mlb")
+    assert client.credits_remaining == 858
