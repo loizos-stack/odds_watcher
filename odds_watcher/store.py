@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS line_state (
 );
 
 CREATE TABLE IF NOT EXISTS api_calls (
-    ts REAL NOT NULL
+    ts   REAL NOT NULL,
+    cost INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls (ts);
 CREATE INDEX IF NOT EXISTS idx_line_state_start ON line_state (event_start);
@@ -88,7 +89,15 @@ class Store:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an older database up to the current schema in place."""
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(api_calls)")}
+        if "cost" not in columns:
+            # Databases created before metered providers counted one per call.
+            self.conn.execute("ALTER TABLE api_calls ADD COLUMN cost INTEGER NOT NULL DEFAULT 1")
 
     def commit(self) -> None:
         """Flush pending writes.
@@ -190,12 +199,21 @@ class Store:
 
     # -- request budget ---------------------------------------------------
     def count_calls_since(self, since_ts: float) -> int:
-        return self.conn.execute(
-            "SELECT COUNT(*) FROM api_calls WHERE ts >= ?", (since_ts,)
-        ).fetchone()[0]
+        """Units spent since `since_ts`.
 
-    def add_call(self, ts: Optional[float] = None) -> None:
-        self.conn.execute("INSERT INTO api_calls (ts) VALUES (?)", (now_ts() if ts is None else ts,))
+        A unit is one request on a per-request provider, or one credit where
+        usage is metered by markets x regions.
+        """
+        total = self.conn.execute(
+            "SELECT SUM(cost) FROM api_calls WHERE ts >= ?", (since_ts,)
+        ).fetchone()[0]
+        return int(total or 0)
+
+    def add_call(self, ts: Optional[float] = None, cost: int = 1) -> None:
+        self.conn.execute(
+            "INSERT INTO api_calls (ts, cost) VALUES (?, ?)",
+            (now_ts() if ts is None else ts, max(int(cost), 1)),
+        )
         self.conn.commit()
 
     def prune_calls(self, older_than_ts: float) -> None:
@@ -222,12 +240,18 @@ class RequestBudget:
         day = self.per_day - self.store.count_calls_since(now - 86400)
         return max(hour, 0), max(day, 0)
 
-    def try_consume(self) -> bool:
+    def try_consume(self, cost: int = 1) -> bool:
+        """Reserve `cost` units, refusing when the allowance cannot cover them."""
         hour, day = self.remaining()
-        if hour <= 0 or day <= 0:
-            log.warning("request budget exhausted (hour=%d, day=%d remaining)", hour, day)
+        if hour < cost or day < cost:
+            log.warning(
+                "request budget exhausted (need %d, have %d this hour / %d today)",
+                cost,
+                hour,
+                day,
+            )
             return False
         now = self.clock()
-        self.store.add_call(now)
+        self.store.add_call(now, cost=cost)
         self.store.prune_calls(now - 86400 * 2)
         return True

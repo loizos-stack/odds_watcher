@@ -54,6 +54,32 @@ def build_url(base: str, path: str, params: Optional[Mapping[str, Any]] = None) 
     return url
 
 
+def request_json_with_headers(
+    url: str,
+    *,
+    method: str = "GET",
+    payload: Optional[Mapping[str, Any]] = None,
+    timeout: int = 20,
+    retries: int = 3,
+    backoff: float = 2.0,
+    sleep=time.sleep,
+) -> tuple:
+    """Like :func:`request_json`, but also returns the response headers.
+
+    Providers that meter usage report the remaining allowance in a header, and
+    that is the only way to see credit burn before the account runs dry.
+    """
+    return _request(
+        url,
+        method=method,
+        payload=payload,
+        timeout=timeout,
+        retries=retries,
+        backoff=backoff,
+        sleep=sleep,
+    )
+
+
 def request_json(
     url: str,
     *,
@@ -64,6 +90,29 @@ def request_json(
     backoff: float = 2.0,
     sleep=time.sleep,
 ) -> Any:
+    """Perform a request and decode the JSON body."""
+    data, _headers = _request(
+        url,
+        method=method,
+        payload=payload,
+        timeout=timeout,
+        retries=retries,
+        backoff=backoff,
+        sleep=sleep,
+    )
+    return data
+
+
+def _request(
+    url: str,
+    *,
+    method: str = "GET",
+    payload: Optional[Mapping[str, Any]] = None,
+    timeout: int = 20,
+    retries: int = 3,
+    backoff: float = 2.0,
+    sleep=time.sleep,
+) -> tuple:
     """Perform a request and decode the JSON body.
 
     Retries transient failures (network errors and 429/5xx) with exponential
@@ -82,7 +131,8 @@ def request_json(
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read().decode("utf-8", errors="replace")
-            return json.loads(raw) if raw.strip() else None
+                headers = {k.lower(): v for k, v in resp.headers.items()}
+            return (json.loads(raw) if raw.strip() else None), headers
         except urllib.error.HTTPError as exc:  # noqa: PERF203 - retry loop
             raw = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
             error = (

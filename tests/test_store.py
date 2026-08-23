@@ -120,3 +120,36 @@ def test_closing_flushes_pending_writes(tmp_path):
         store.record(quote(2.20), pre_window=True, event_start=1000, ts=1)
     with Store(path) as reopened:
         assert reopened.get_state(quote()).baseline_odds == 2.20
+
+
+def test_budget_accounts_for_metered_credits(store):
+    """A provider charging markets x regions must not be counted as one call."""
+    clock = {"now": 10_000.0}
+    budget = RequestBudget(store, per_hour=10, per_day=100, clock=lambda: clock["now"])
+
+    assert budget.try_consume(cost=3) is True
+    assert budget.remaining()[0] == 7
+    assert budget.try_consume(cost=6) is True
+    assert budget.remaining()[0] == 1
+    assert budget.try_consume(cost=3) is False  # 3 will not fit in 1
+    assert budget.try_consume(cost=1) is True
+
+
+def test_old_databases_gain_the_cost_column(tmp_path):
+    """An existing install must keep working across the schema change."""
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(str(path))
+    legacy.executescript(
+        "CREATE TABLE api_calls (ts REAL NOT NULL);"
+        "INSERT INTO api_calls (ts) VALUES (1.0), (2.0);"
+    )
+    legacy.commit()
+    legacy.close()
+
+    store = Store(path)
+    assert store.count_calls_since(0) == 2  # pre-existing rows count as one each
+    store.add_call(3.0, cost=5)
+    assert store.count_calls_since(0) == 7
+    store.close()

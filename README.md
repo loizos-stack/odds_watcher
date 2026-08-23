@@ -155,7 +155,10 @@ Every setting is an environment variable, documented in
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `BOOKMAKERS` | `Bet365,DraftKings` | Books to watch (free tier allows 2) |
-| `SPORTS` | `baseball` | Comma-separated sports to follow |
+| `ODDS_PROVIDER` | `odds-api-io` | `odds-api-io` or `the-odds-api` |
+| `SPORTS` | `baseball` | Sports to follow (`baseball_mlb` on The Odds API) |
+| `REGIONS` | `us` | The Odds API only; multiplies credit cost |
+| `PROP_MARKETS` | *(none)* | The Odds API only; charged per fixture |
 | `LEAGUES` | *(all)* | Restrict to specific league slugs |
 | `MARKETS` | *(all)* | e.g. `Totals,-F5`; substring, `-` excludes |
 | `OUTCOMES` | *(all)* | e.g. `over,under` to watch totals only |
@@ -237,6 +240,41 @@ so two things matter:
 
 Props move faster and further than game lines, so expect `MIN_DROP_PCT` to need
 raising once you see real volume — calibrate with `run --dry-run`.
+
+## Choosing a provider
+
+`ODDS_PROVIDER` selects the odds source. Everything downstream — drop
+detection, storage, alerting — is identical either way.
+
+| | `odds-api-io` | `the-odds-api` |
+| --- | --- | --- |
+| Base URL | `api2.odds-api.io/v3` | `api.the-odds-api.com/v4` |
+| Metering | per request | **credits = markets × regions, per call** |
+| Bookmakers | selected on the account (2 on free) | chosen per request, via `REGIONS`/`BOOKMAKERS` |
+| Featured markets | all markets in one batched call | one call per sport (`h2h,spreads,totals`) |
+| Player props | in the same payload | **per fixture only**, charged per fixture |
+| Leagues | separate league slugs | folded into the sport key (`baseball_mlb`) |
+
+### The credit arithmetic on The Odds API
+
+Because props are charged per fixture, they dominate the bill. A month of MLB
+evenings (15 games, 6h/night, 30 days):
+
+| Configuration | Credits/month | Fits |
+| --- | ---: | --- |
+| Featured only, 60s poll, 1 region | 32,400 | Business ($99) |
+| Featured only, 60s poll, 2 regions | 64,800 | Business |
+| + 3 prop markets, 5 games in window, 60s | 194,400 | Business, barely |
+| + 3 prop markets, 5 games in window, 120s | 97,200 | Business |
+| + 6 prop markets, 5 games in window, 60s | 356,400 | **over the $99 plan** |
+
+Pro ($29) is 20,000 credits/month and excludes props entirely, so even
+featured-only polling at 60s does not fit it. Every extra region multiplies
+everything: `REGIONS=us,uk` doubles the bill.
+
+`MAX_REQUESTS_PER_HOUR` / `_PER_DAY` are enforced locally in credits for this
+provider, and `check` prints the account balance from the
+`x-requests-remaining` header.
 
 ## Coverage comes first
 

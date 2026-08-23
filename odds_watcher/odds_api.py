@@ -441,6 +441,14 @@ class OddsApiClient:
         payload = self._call("bookmakers")
         return self._identifier_rows(payload, ("id", "slug", "key", "bookmaker", "name"))
 
+    @staticmethod
+    def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> list:
+        return parse_quotes(payload, default_event_id=default_event_id)
+
+    @staticmethod
+    def market_catalogue(payload: Any) -> dict:
+        return market_catalogue(payload)
+
     def get_odds_payloads(
         self, event_ids: Sequence[str], bookmakers: Sequence[str], *, fallback_limit: int = 5
     ) -> list:

@@ -119,6 +119,17 @@ class Config:
     max_requests_per_hour: int = 90
     max_requests_per_day: int = 450
 
+    # --- provider --------------------------------------------------------
+    # "odds-api-io" or "the-odds-api". The two differ in how odds are fetched
+    # and metered, but present the same events and prices downstream.
+    odds_provider: str = "odds-api-io"
+    # The Odds API only: regions to query, and its market keys. Usage there is
+    # metered as markets x regions per call, and props are per fixture.
+    regions: tuple = ("us",)
+    featured_markets: tuple = ("h2h", "spreads", "totals")
+    prop_markets: tuple = ()
+    the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
+
     # --- plumbing --------------------------------------------------------
     # Fetch odds one fixture at a time instead of batching. Player props are
     # documented as being available per event, so a batched request may return
@@ -155,6 +166,12 @@ class Config:
                 hint = "Message your bot in Telegram, then run `chat-id` to discover it."
             raise ConfigError(
                 "Missing required environment variable(s): " + ", ".join(missing) + ". " + hint
+            )
+
+        provider = env.get("ODDS_PROVIDER", "odds-api-io").strip().lower()
+        if provider not in ("odds-api-io", "the-odds-api"):
+            raise ConfigError(
+                f"ODDS_PROVIDER must be 'odds-api-io' or 'the-odds-api', got {provider!r}"
             )
 
         bookmakers = _csv(env.get("BOOKMAKERS", ",".join(DEFAULT_BOOKMAKERS)))
@@ -203,6 +220,13 @@ class Config:
             max_requests_per_hour=_get_int(env, "MAX_REQUESTS_PER_HOUR", 90, minimum=1),
             max_requests_per_day=_get_int(env, "MAX_REQUESTS_PER_DAY", 450, minimum=1),
             per_event_odds=_get_bool(env, "PER_EVENT_ODDS"),
+            odds_provider=provider,
+            regions=_csv(env.get("REGIONS", "us")) or ("us",),
+            featured_markets=_csv(env.get("FEATURED_MARKETS", "h2h,spreads,totals")),
+            prop_markets=_csv(env.get("PROP_MARKETS", "")),
+            the_odds_api_base_url=env.get(
+                "THE_ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"
+            ).rstrip("/"),
             api_base_url=env.get("ODDS_API_BASE_URL", "https://api2.odds-api.io/v3").rstrip("/"),
             request_timeout_seconds=_get_int(env, "REQUEST_TIMEOUT_SECONDS", 20, minimum=1),
             db_path=Path(env.get("DB_PATH", "odds_watcher.db")).expanduser(),

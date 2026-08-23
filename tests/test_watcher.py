@@ -507,3 +507,36 @@ def test_listing_counts_match_what_is_printed(config, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "only in the batched response (30)" in out
     assert "... and 5 more" in out  # 25 shown + 5 elided == 30
+
+
+def test_watcher_runs_unchanged_against_the_odds_api(config, store):
+    """The provider swap must not touch detection, storage or alerting."""
+    import dataclasses
+    import json
+    from pathlib import Path
+
+    from odds_watcher.theoddsapi import parse_quotes as v4_parse
+
+    raw = json.loads(
+        (Path(__file__).parent / "fixtures" / "the_odds_api_v4.json").read_text(encoding="utf-8")
+    )
+    event = Event(id="e91d0d0d2b1c9a1f", start_ts=KICKOFF, home="Philadelphia Phillies",
+                  away="St. Louis Cardinals", league="MLB")
+    baseline = [q for q in v4_parse(raw) if q.event_id == event.id]
+
+    dropped = json.loads(json.dumps(raw))
+    dropped[0]["bookmakers"][0]["markets"][0]["outcomes"][0]["price"] = 1.45  # 1.65 -> 1.45
+    moved = [q for q in v4_parse(dropped) if q.event_id == event.id]
+
+    cfg = dataclasses.replace(config, bookmakers=("draftkings", "betfair_ex_uk"))
+    api = FakeApi([event], [baseline, moved])
+    telegram = FakeTelegram()
+    watcher = Watcher(cfg, api, telegram, store)
+
+    assert watcher.poll_once(at(20)) == []
+    alerts = watcher.poll_once(at(5))
+    assert len(alerts) == 1
+    assert alerts[0].quote.market == "h2h"
+    assert alerts[0].reference_odds == 1.65
+    assert round(alerts[0].drop_pct, 1) == 12.1
+    assert "DRAFTKINGS" in telegram.sent[0]

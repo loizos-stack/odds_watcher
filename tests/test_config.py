@@ -144,3 +144,27 @@ def test_sport_override_does_not_need_a_correct_env(monkeypatch, tmp_path):
 
     cli.main(["leagues", "--sport", "baseball", "--env-file", str(tmp_path / "none.env")])
     assert seen["sports"] == ("baseball",)
+
+
+def test_provider_selection():
+    from odds_watcher.providers import build_client
+    from odds_watcher.odds_api import OddsApiClient
+    from odds_watcher.theoddsapi import TheOddsApiClient
+
+    default = Config.from_env(BASE)
+    assert default.odds_provider == "odds-api-io"
+    assert isinstance(build_client(default), OddsApiClient)
+
+    switched = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api", "SPORTS": "baseball_mlb",
+                                "REGIONS": "us,uk", "PROP_MARKETS": "batter_home_runs"})
+    client = build_client(switched)
+    assert isinstance(client, TheOddsApiClient)
+    assert client.regions == ("us", "uk")
+    assert client.prop_markets == ("batter_home_runs",)
+    assert client.default_sport == "baseball_mlb"
+
+
+def test_unknown_provider_is_rejected():
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env({**BASE, "ODDS_PROVIDER": "oddspapi"})
+    assert "the-odds-api" in str(exc.value)

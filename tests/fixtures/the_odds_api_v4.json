@@ -1,0 +1,66 @@
+[
+  {
+    "id": "e91d0d0d2b1c9a1f",
+    "sport_key": "baseball_mlb",
+    "sport_title": "MLB",
+    "commence_time": "2026-08-23T23:05:00Z",
+    "home_team": "Philadelphia Phillies",
+    "away_team": "St. Louis Cardinals",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-08-23T22:55:11Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-08-23T22:55:11Z",
+           "outcomes": [{"name": "Philadelphia Phillies", "price": 1.65},
+                        {"name": "St. Louis Cardinals", "price": 2.30}]},
+          {"key": "spreads", "last_update": "2026-08-23T22:55:11Z",
+           "outcomes": [{"name": "Philadelphia Phillies", "price": 2.05, "point": -1.5},
+                        {"name": "St. Louis Cardinals", "price": 1.80, "point": 1.5}]},
+          {"key": "totals", "last_update": "2026-08-23T22:55:11Z",
+           "outcomes": [{"name": "Over", "price": 1.91, "point": 8.5},
+                        {"name": "Under", "price": 1.91, "point": 8.5}]}
+        ]
+      },
+      {
+        "key": "betfair_ex_uk",
+        "title": "Betfair",
+        "last_update": "2026-08-23T22:54:02Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-08-23T22:54:02Z",
+           "outcomes": [{"name": "Philadelphia Phillies", "price": 1.68},
+                        {"name": "St. Louis Cardinals", "price": 2.34}]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "props-block",
+    "sport_key": "baseball_mlb",
+    "sport_title": "MLB",
+    "commence_time": "2026-08-23T23:05:00Z",
+    "home_team": "Philadelphia Phillies",
+    "away_team": "St. Louis Cardinals",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-08-23T22:56:40Z",
+        "markets": [
+          {"key": "batter_home_runs", "last_update": "2026-08-23T22:56:40Z",
+           "outcomes": [
+             {"name": "Over", "description": "Bryce Harper", "price": 3.60, "point": 0.5},
+             {"name": "Under", "description": "Bryce Harper", "price": 1.28, "point": 0.5},
+             {"name": "Over", "description": "Kyle Schwarber", "price": 3.10, "point": 0.5}
+           ]},
+          {"key": "pitcher_strikeouts", "last_update": "2026-08-23T22:56:40Z",
+           "outcomes": [
+             {"name": "Over", "description": "Zack Wheeler", "price": 1.87, "point": 6.5},
+             {"name": "Under", "description": "Zack Wheeler", "price": 1.95, "point": 6.5}
+           ]}
+        ]
+      }
+    ]
+  }
+]

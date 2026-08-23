@@ -19,7 +19,8 @@ from typing import Optional
 from .config import ALL_CREDENTIALS, Config, ConfigError, load_dotenv
 from .detector import Alert
 from .http import TransportError
-from .odds_api import OddsApiClient
+from .providers import build_client
+from .theoddsapi import UnsupportedByProvider
 from .store import RequestBudget, Store
 from .telegram import TelegramClient
 from .util import format_clock, format_countdown, now_ts
@@ -103,12 +104,7 @@ def setup_logging(level: str) -> None:
 def _components(config: Config):
     store = Store(config.db_path)
     budget = RequestBudget(store, config.max_requests_per_hour, config.max_requests_per_day)
-    api = OddsApiClient(
-        config.odds_api_key,
-        base_url=config.api_base_url,
-        timeout=config.request_timeout_seconds,
-        budget=budget,
-    )
+    api = build_client(config, budget=budget)
     telegram = TelegramClient(
         config.telegram_bot_token,
         config.telegram_chat_id,
@@ -169,7 +165,11 @@ def cmd_check(config: Config) -> int:
         _sport_error(api, config, exc)
 
     hour, day = budget.remaining()
-    print(f"· request budget left: {hour}/hour, {day}/day")
+    unit = "credit" if config.odds_provider == "the-odds-api" else "request"
+    print(f"· local {unit} budget left: {hour}/hour, {day}/day")
+    remaining = getattr(api, "credits_remaining", None)
+    if remaining is not None:
+        print(f"· The Odds API account credits remaining: {remaining}")
     store.close()
     return 0 if ok else 1
 
@@ -232,6 +232,9 @@ def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
     try:
         for sport in config.sports:
             rows.extend(api.get_leagues(sport))
+    except UnsupportedByProvider as exc:
+        print(f"! {exc}", file=sys.stderr)
+        return 1
     except TransportError as exc:
         print(f"✗ could not list leagues: {exc}", file=sys.stderr)
         _sport_error(api, config, exc)
@@ -339,6 +342,9 @@ def cmd_select_bookmakers(config: Config) -> int:
         api.select_bookmakers(config.bookmakers)
         print(f"✓ account bound to: {', '.join(api.get_selected_bookmakers())}")
         return 0
+    except UnsupportedByProvider as exc:
+        print(f"! {exc}")
+        return 0
     except TransportError as exc:
         print(f"✗ could not select bookmakers: {exc}", file=sys.stderr)
         print("\nThe identifiers in BOOKMAKERS are not the ones this API uses.")
@@ -376,9 +382,11 @@ def cmd_chat_id(config: Config) -> int:
 def cmd_status(config: Config) -> int:
     store, budget, _, _ = _components(config)
     hour, day = budget.remaining()
+    unit = "credits" if config.odds_provider == "the-odds-api" else "requests"
+    print(f"provider:       {config.odds_provider}")
     print(f"database:       {config.db_path}")
     print(f"tracked lines:  {store.tracked_lines()}")
-    print(f"budget left:    {hour}/hour, {day}/day")
+    print(f"budget left:    {hour}/hour, {day}/day ({unit})")
     print(f"alert rule:     drop ≥ {config.min_drop_pct:.1f}% {config.alert_window_label}")
     print(f"bookmakers:     {', '.join(config.bookmakers)}")
     store.close()
@@ -395,9 +403,8 @@ def cmd_markets(config: Config, search: Optional[str] = None) -> int:
     only exist on bigger games — so this samples several fixtures at once, in a
     single batched request, and reports which books priced each market.
     """
-    from .odds_api import market_catalogue
-
     store, _, api, _ = _components(config)
+    _parse, _catalogue_fn = _parsers(config)
     catalogue: dict = {}
     try:
         now = now_ts()
@@ -406,7 +413,7 @@ def cmd_markets(config: Config, search: Optional[str] = None) -> int:
             print("no upcoming fixtures to sample", file=sys.stderr)
             return 1
         blocks = api.get_odds_payloads([e.id for e in upcoming], config.bookmakers)
-        for name, books in market_catalogue(blocks).items():
+        for name, books in _catalogue_fn(blocks).items():
             entry = catalogue.setdefault(name, {})
             for book, count in books.items():
                 entry[book] = entry.get(book, 0) + count
@@ -455,12 +462,24 @@ def _upcoming(api, config: Config, now: float, limit: int, *, spread: bool = Fal
     return [upcoming[int(index * stride)] for index in range(limit)]
 
 
+def _parsers(config: Config):
+    """The active provider's ``(parse_quotes, market_catalogue)`` pair.
+
+    Selected from config rather than from the client, so the payload parsers
+    stay plain functions that can be exercised without a client at all.
+    """
+    if config.odds_provider == "the-odds-api":
+        from . import theoddsapi as provider
+    else:
+        from . import odds_api as provider
+    return provider.parse_quotes, provider.market_catalogue
+
+
 def _books_in_block(block: dict, config: Config) -> dict:
     """``{bookmaker: price count}`` for one raw odds block."""
-    from .odds_api import market_catalogue
-
+    _parse, catalogue = _parsers(config)
     counts: dict = {}
-    for books in market_catalogue([block]).values():
+    for books in catalogue([block]).values():
         for book, count in books.items():
             counts[book] = counts.get(book, 0) + count
     return counts
@@ -474,10 +493,10 @@ def cmd_props(config: Config) -> int:
     That distinction decides the request budget entirely, so this fetches the
     same fixture both ways and compares what each returns.
     """
-    from .odds_api import market_catalogue
     from .watcher import EVENTS_PER_ODDS_REQUEST
 
     store, _, api, _ = _components(config)
+    _parse, _catalogue_fn = _parsers(config)
     try:
         now = now_ts()
         events = _upcoming(api, config, now, PROBE_SAMPLE_SIZE)
@@ -490,7 +509,7 @@ def cmd_props(config: Config) -> int:
         for block in batched:
             if not isinstance(block, dict):
                 continue
-            catalogue = market_catalogue([block])
+            catalogue = _catalogue_fn([block])
             if catalogue:
                 event_id = str(block.get("id") or block.get("eventId") or "")
                 target = next((e for e in events if e.id == event_id), None)
@@ -500,7 +519,7 @@ def cmd_props(config: Config) -> int:
             target = events[0]
             print(f"no fixture in the sample had batched prices; inspecting {target.name}\n")
 
-        single = market_catalogue([api.get_event_odds_raw(target.id, config.bookmakers)])
+        single = _catalogue_fn([api.get_event_odds_raw(target.id, config.bookmakers)])
     except TransportError as exc:
         print(f"✗ props check failed: {exc}", file=sys.stderr)
         _sport_error(api, config, exc)
@@ -604,8 +623,6 @@ def cmd_probe(config: Config) -> int:
     """
     import json
 
-    from .odds_api import parse_quotes
-
     store, _, api, _ = _components(config)
     try:
         now = now_ts()
@@ -659,6 +676,7 @@ def cmd_probe(config: Config) -> int:
         print(f"! {book} priced none of the sampled fixtures")
 
     example = priced[0]
+    parse_quotes, _ = _parsers(config)
     quotes = parse_quotes([example[1]], default_event_id=example[0].id if example[0] else None)
     if quotes:
         print(f"\nsample prices from {example[0].name if example[0] else '?'}:")
