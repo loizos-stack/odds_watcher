@@ -739,3 +739,20 @@ def test_explicit_sports_never_call_the_listing(config, store):
 
     watcher = Watcher(config, NoListing([], []), FakeTelegram(), store)
     assert watcher.resolve_sports(at(30)) == config.sports
+
+
+def test_empty_sports_listing_is_loud(config, store, caplog):
+    """Watching nothing looks identical to a quiet night; say so."""
+    import dataclasses
+    import logging
+
+    class EmptyCatalogue(FakeApi):
+        def get_sports(self, include_all=False):
+            return []
+
+    watcher = Watcher(
+        dataclasses.replace(config, sports=("all",)), EmptyCatalogue([], []), FakeTelegram(), store
+    )
+    with caplog.at_level(logging.ERROR):
+        assert watcher.resolve_sports(at(30)) == ()
+    assert "resolved to no sports" in caplog.text

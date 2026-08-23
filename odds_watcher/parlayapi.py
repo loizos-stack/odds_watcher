@@ -269,8 +269,17 @@ class ParlayApiClient:
     def get_sports(self, include_all: bool = False) -> list:
         # Nothing documents this endpoint as free, so it is counted. Better to
         # over-report local spend than to quietly overrun a 1,000/month tier.
+        payload = self._call("v1/sports")
+        # Their odds come wrapped as {"events": [...]}, so a listing is likely
+        # wrapped under its own noun. Not added to the shared unwrapper: an
+        # event block carries a "bookmakers" key that must not be unwrapped.
+        if isinstance(payload, dict):
+            for key in ("sports", "data", "results", "items"):
+                if isinstance(payload.get(key), list):
+                    payload = payload[key]
+                    break
         rows = []
-        for item in _as_list(self._call("v1/sports")):
+        for item in _as_list(payload):
             if isinstance(item, str):
                 rows.append((item, item))
             elif isinstance(item, dict):

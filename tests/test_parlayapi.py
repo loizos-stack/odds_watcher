@@ -194,3 +194,28 @@ def test_endpoint_paths(monkeypatch):
     assert calls[0].endswith("/v1/sports")
     assert calls[1].endswith("/v1/sports/baseball_mlb/odds")
     assert calls[2].endswith("/v1/sports/baseball_mlb/props")
+
+
+def test_sports_listing_unwraps_its_envelope(monkeypatch):
+    """Their odds are wrapped as {"events": [...]}; a listing is wrapped too."""
+    shapes = [
+        {"sports": [{"key": "baseball_mlb", "title": "MLB"}]},
+        {"data": [{"key": "baseball_mlb", "title": "MLB"}]},
+        [{"key": "baseball_mlb", "title": "MLB"}],
+    ]
+    for shape in shapes:
+        monkeypatch.setattr(
+            "odds_watcher.parlayapi.request_json_with_headers", lambda url, _s=shape, **kw: (_s, {})
+        )
+        assert ParlayApiClient("k").get_sports() == [("baseball_mlb", "MLB")], shape
+
+
+def test_event_blocks_are_not_mistaken_for_listings():
+    """Guard: unwrapping must never swallow an event's own bookmakers key."""
+    quotes = parse_quotes({"events": [{
+        "id": "e1",
+        "bookmakers": [{"key": "bet365", "markets": [
+            {"key": "h2h", "outcomes": [{"name": "A", "price": -130}]}]}],
+    }]})
+    assert len(quotes) == 1
+    assert quotes[0].bookmaker == "bet365"

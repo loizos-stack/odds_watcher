@@ -107,7 +107,16 @@ class Watcher:
         except (TransportError, BudgetExceeded) as exc:
             log.error("could not list sports: %s", exc)
             return self._all_sports
-        self._all_sports = tuple(key for key, _title in rows)
+        resolved = tuple(key for key, _title in rows)
+        if not resolved:
+            # SPORTS=all resolving to nothing means no fixtures, no prices and
+            # no alerts — a silence that looks exactly like a quiet evening.
+            log.error(
+                "SPORTS=all resolved to no sports; the provider's listing was empty "
+                "or unreadable. Set SPORTS explicitly, or check `sports`."
+            )
+            return self._all_sports
+        self._all_sports = resolved
         self._sports_fetched_at = now
         log.info("watching %d sport(s): %s", len(self._all_sports), ", ".join(self._all_sports[:8]))
         return self._all_sports
