@@ -236,6 +236,45 @@ class Watcher:
         wait = min(upcoming) if upcoming else cfg.idle_poll_interval_seconds
         return int(max(cfg.poll_interval_seconds, min(wait, cfg.idle_poll_interval_seconds)))
 
+    def estimate_poll_cost(self, sports: int) -> int:
+        """Requests one poll costs: odds per sport, plus props when enabled."""
+        per_sport = 2 if self.config.prop_markets else 1
+        return sports * per_sport
+
+    def warn_if_unaffordable(self, sports: int) -> None:
+        """Say what the configured scope costs before it is spent.
+
+        A wide SPORTS list multiplies every poll, and the arithmetic is not
+        obvious from the settings — an allowance can be gone in minutes.
+        """
+        cfg = self.config
+        per_poll = self.estimate_poll_cost(sports)
+        per_hour = int(per_poll * 3600 / cfg.poll_interval_seconds)
+        log.info(
+            "%d sport(s) x %s = about %d request(s) per poll, ~%d/hour at a %ds interval",
+            sports,
+            "odds + props" if cfg.prop_markets else "odds",
+            per_poll,
+            per_hour,
+            cfg.poll_interval_seconds,
+        )
+        remaining = getattr(self.api, "credits_remaining", None)
+        if remaining:
+            polls = remaining // max(per_poll, 1)
+            minutes = polls * cfg.poll_interval_seconds / 60
+            log.warning(
+                "provider balance %d leaves about %d poll(s), roughly %.0f minute(s)",
+                remaining,
+                polls,
+                minutes,
+            )
+        if per_hour > cfg.max_requests_per_hour:
+            log.warning(
+                "that exceeds MAX_REQUESTS_PER_HOUR (%d), so polls will be skipped. "
+                "Narrow SPORTS, raise POLL_INTERVAL_SECONDS, or drop PROP_MARKETS.",
+                cfg.max_requests_per_hour,
+            )
+
     def run_forever(self) -> None:
         cfg = self.config
         log.info(
@@ -245,9 +284,13 @@ class Watcher:
             cfg.min_drop_pct,
             cfg.alert_window_label,
         )
+        first_pass = True
         while True:
             started = self.clock()
             try:
+                if first_pass:
+                    self.warn_if_unaffordable(len(self.resolve_sports(started)))
+                    first_pass = False
                 self.poll_once(started)
             except Exception:  # keep the daemon alive across transient faults
                 log.exception("poll failed")

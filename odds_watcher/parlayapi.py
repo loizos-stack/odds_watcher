@@ -338,6 +338,9 @@ class ParlayApiClient:
         self.supports_multi = True
         self.credits_remaining: Optional[int] = None
         self._game_market_cache: dict = {}
+        # The API's valid-market list is global, so one rejection teaches every
+        # sport. Probing per sport would waste a request on each of them.
+        self._valid_markets: tuple = ()
         self.last_usage_payload: Any = None
 
     # -- plumbing ---------------------------------------------------------
@@ -492,9 +495,12 @@ class ParlayApiClient:
         if sport in self._game_market_cache:
             return self._game_market_cache[sport]
         if self._wants_all_game_markets():
+            if self._valid_markets:
+                # Already learned from another sport's rejection.
+                return self._valid_markets
             # Deliberately send the literal "all" once: the API rejects it with
             # the full list of keys it will accept, which is a better source
-            # than any list hard-coded here. The result is cached per sport.
+            # than any list hard-coded here.
             return ("all",)
         return tuple(self.featured_markets)
 
@@ -516,6 +522,11 @@ class ParlayApiClient:
             valid = valid_markets_from_error(str(exc)) if exc.status == 400 else ()
             if not valid:
                 raise
+            if not self._valid_markets:
+                self._valid_markets = tuple(
+                    m for m in valid
+                    if not m.startswith(("player_", "batter_", "pitcher_"))
+                )
             if self._wants_all_game_markets():
                 wanted = tuple(m for m in valid if not m.startswith(("player_", "batter_", "pitcher_")))
             else:

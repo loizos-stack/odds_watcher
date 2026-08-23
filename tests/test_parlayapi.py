@@ -410,3 +410,26 @@ def test_body_wins_over_a_rate_limit_header(monkeypatch):
     client = ParlayApiClient("k")
     client.get_events("baseball_mlb")
     assert client.credits_remaining == 858
+
+
+def test_the_valid_market_list_is_learned_once_for_all_sports(monkeypatch):
+    """Probing per sport would waste a request on each of 89 of them."""
+    from odds_watcher.http import HttpError
+
+    probes = []
+
+    def fake(url, **kw):
+        asked = url.split("markets=")[1].split("&")[0]
+        if "all" in asked:
+            probes.append(url)
+            raise HttpError(400, '{"message":"Invalid market. Valid values are: '
+                                 'h2h, spreads, totals;"}', url)
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", featured_markets=("all",))
+    for sport in ("baseball_mlb", "soccer_epl", "tennis_atp", "basketball_nba"):
+        client._sport_odds(sport)
+
+    assert len(probes) == 1          # one rejection teaches all four
+    assert client._valid_markets == ("h2h", "spreads", "totals")

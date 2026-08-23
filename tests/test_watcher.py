@@ -920,3 +920,35 @@ def test_movements_does_not_claim_stranded_lines_in_first_seen_mode(config, caps
     assert "no pre-window price" not in out
     assert "cannot signal" not in out
     assert "SIGNALLED" in out
+
+
+def test_poll_cost_is_reported_before_it_is_spent(config, store, caplog):
+    """89 sports x props is ~178 requests a poll; that must be said, not discovered."""
+    import dataclasses
+    import logging
+
+    class Balance(FakeApi):
+        credits_remaining = 858
+
+    cfg = dataclasses.replace(config, prop_markets=("all",), poll_interval_seconds=300)
+    watcher = Watcher(cfg, Balance([], []), FakeTelegram(), store)
+
+    with caplog.at_level(logging.INFO):
+        watcher.warn_if_unaffordable(89)
+
+    assert watcher.estimate_poll_cost(89) == 178
+    assert "about 178 request(s) per poll" in caplog.text
+    assert "858 leaves about 4 poll(s)" in caplog.text
+    assert "exceeds MAX_REQUESTS_PER_HOUR" in caplog.text
+
+
+def test_no_alarm_when_the_scope_fits(config, store, caplog):
+    import dataclasses
+    import logging
+
+    cfg = dataclasses.replace(config, prop_markets=(), poll_interval_seconds=300,
+                              max_requests_per_hour=100)
+    watcher = Watcher(cfg, FakeApi([], []), FakeTelegram(), store)
+    with caplog.at_level(logging.WARNING):
+        watcher.warn_if_unaffordable(1)
+    assert "exceeds MAX_REQUESTS_PER_HOUR" not in caplog.text
