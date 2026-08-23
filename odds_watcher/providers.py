@@ -24,6 +24,7 @@ def build_client(config: Config, budget=None, market_cache=None):
             budget=budget,
             prop_markets=config.prop_markets,
             default_sport=config.sports[0] if config.sports else "",
+            odds_format=config.odds_format,
         )
     if config.odds_provider == "the-odds-api":
         return TheOddsApiClient(

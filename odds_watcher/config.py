@@ -138,6 +138,8 @@ class Config:
     market_keys_ttl_seconds: int = 86400
     the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
     parlay_api_base_url: str = "https://parlay-api.com"
+    # How the provider quotes prices: "american", "decimal" or "auto".
+    odds_format: str = "american"
 
     # --- plumbing --------------------------------------------------------
     # Fetch odds one fixture at a time instead of batching. Player props are
@@ -262,6 +264,7 @@ class Config:
             featured_markets=_csv(env.get("FEATURED_MARKETS", "")) or ("h2h", "spreads", "totals"),
             prop_markets=_csv(env.get("PROP_MARKETS", "")),
             market_keys_ttl_seconds=_get_int(env, "MARKET_KEYS_TTL_SECONDS", 86400, minimum=600),
+            odds_format=env.get("ODDS_FORMAT", "american").strip().lower(),
             parlay_api_base_url=env.get(
                 "PARLAY_API_BASE_URL", "https://parlay-api.com"
             ).rstrip("/"),

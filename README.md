@@ -365,6 +365,8 @@ detection, storage, alerting — is identical either way.
 | Base URL | `api2.odds-api.io/v3` | `api.the-odds-api.com/v4` | `parlay-api.com/v1` |
 | Auth | `apiKey` query param | `api_key` query param | `X-API-Key` header |
 | Metering | per request | **credits = markets × regions, per call** | per request |
+| Cost of one poll | 1 per 20 fixtures | 3+ per sport, props per fixture | **1 per sport** |
+| Price format | decimal | decimal | American, converted on the way in |
 | Bookmakers | selected on the account (2 on free) | chosen per request, via `REGIONS`/`BOOKMAKERS` |
 | Featured markets | all markets in one batched call | one call per sport (`h2h,spreads,totals`) |
 | Player props | in the same payload | **per fixture only**, charged per fixture |

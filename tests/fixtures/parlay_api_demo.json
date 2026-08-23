@@ -1,0 +1,83 @@
+{
+  "demo": true,
+  "demo_message": "This is a free no-auth demo capped at 60 requests/hour and the first 5 events.",
+  "demo_remaining_hour": 59,
+  "sport_key": "baseball_mlb",
+  "events_returned": 2,
+  "events": [
+    {
+      "id": "d197ab11d19211f51b349da57e14539b",
+      "sport_key": "baseball_mlb",
+      "sport_title": "MLB",
+      "commence_time": "2026-08-23T20:15:00Z",
+      "home_team": "Arizona Diamondbacks",
+      "away_team": "Cincinnati Reds",
+      "bookmakers": [
+        {
+          "key": "fanduel", "title": "FanDuel", "last_update": "2026-08-23T17:48:13Z",
+          "markets": [{"key": "h2h", "last_update": "2026-08-23T17:47:31Z", "outcomes": [
+            {"name": "Arizona Diamondbacks", "price": -130},
+            {"name": "Cincinnati Reds", "price": 120}]}],
+          "price_age": {"unchanged_seconds": 8114.52, "move_observed": false,
+                        "observations": 1913, "has_history": true},
+          "last_update_ms": 1787507293867, "stale_seconds": 0.89
+        },
+        {
+          "key": "bet365", "title": "bet365", "last_update": "2026-08-23T17:48:08Z",
+          "markets": [{"key": "h2h", "last_update": "2026-08-23T17:33:44Z", "outcomes": [
+            {"name": "Arizona Diamondbacks", "price": -130},
+            {"name": "Cincinnati Reds", "price": 120}]}],
+          "price_age": {"unchanged_seconds": 8114.52, "move_observed": false,
+                        "observations": 1427, "has_history": true},
+          "last_update_ms": 1787507288127, "stale_seconds": 6.63
+        },
+        {
+          "key": "kalshi", "title": "Kalshi", "last_update": "2026-08-23T17:48:09Z",
+          "markets": [{"key": "h2h", "last_update": "2026-08-23T17:48:09Z", "outcomes": [
+            {"name": "Cincinnati Reds", "price": -100}]}],
+          "price_age": {"unchanged_seconds": 0.0, "move_observed": false,
+                        "observations": 0, "has_history": false},
+          "last_update_ms": 1787507289233, "stale_seconds": 5.52
+        },
+        {
+          "key": "draftkings", "title": "DraftKings", "last_update": "2026-08-23T17:47:48Z",
+          "markets": [{"key": "h2h", "last_update": "2026-08-23T16:50:46Z", "outcomes": [
+            {"name": "Arizona Diamondbacks", "price": -129},
+            {"name": "Cincinnati Reds", "price": 120}]}],
+          "price_age": {"unchanged_seconds": 7715.9, "move_observed": false,
+                        "observations": 97, "has_history": true},
+          "last_update_ms": 1787507268795, "stale_seconds": 25.96
+        }
+      ],
+      "canonical_event_id": "4e1dce87d4d7034d"
+    },
+    {
+      "id": "86fc1e8c05ef25a72f8d6a7f4c91f992",
+      "sport_key": "baseball_mlb",
+      "sport_title": "MLB",
+      "commence_time": "2026-08-23T19:15:00Z",
+      "home_team": "Boston Red Sox",
+      "away_team": "San Francisco Giants",
+      "bookmakers": [
+        {
+          "key": "bet365", "title": "bet365", "last_update": "2026-08-23T17:48:08Z",
+          "markets": [{"key": "h2h", "last_update": "2026-08-23T17:43:52Z", "outcomes": [
+            {"name": "Boston Red Sox", "price": -205},
+            {"name": "San Francisco Giants", "price": 185}]}],
+          "price_age": {"unchanged_seconds": 7694.37, "move_observed": true,
+                        "observations": 1357, "has_history": true},
+          "last_update_ms": 1787507288127, "stale_seconds": 6.63
+        },
+        {
+          "key": "polymarket", "title": "Polymarket", "last_update": "2026-08-23T16:55:28Z",
+          "markets": [{"key": "h2h", "last_update": "2026-08-23T16:55:28Z", "outcomes": [
+            {"name": "Boston Red Sox", "price": -108}]}],
+          "price_age": {"unchanged_seconds": 0.0, "move_observed": false,
+                        "observations": 0, "has_history": false},
+          "last_update_ms": 1787504128989, "stale_seconds": 3165.77
+        }
+      ],
+      "canonical_event_id": "ef8bb3562a9dc158"
+    }
+  ]
+}

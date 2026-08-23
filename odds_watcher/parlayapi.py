@@ -58,13 +58,27 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _price(value: Any) -> Optional[float]:
-    """Decimal odds. American prices are converted; non-numeric values ignored."""
+def _price(value: Any, odds_format: str = "american") -> Optional[float]:
+    """Decimal odds from a price in the configured format.
+
+    ParlayAPI quotes American prices (-130, +120). The format is configured
+    rather than inferred, because a decimal longshot of 150.0 and an American
+    +150 are indistinguishable by value alone and mean very different things.
+    """
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    if number >= 100:  # American favourite/underdog notation
+    if odds_format == "decimal":
+        return number if number > 1 else None
+    if odds_format == "american":
+        if number >= 100:
+            return round(1 + number / 100, 4)
+        if number <= -100:
+            return round(1 + 100 / abs(number), 4)
+        return number if number > 1 else None
+    # "auto": treat magnitudes of 100+ as American.
+    if number >= 100:
         return round(1 + number / 100, 4)
     if number <= -100:
         return round(1 + 100 / abs(number), 4)
@@ -124,7 +138,7 @@ def _iter_markets(container: Any):
                 yield str(name), value
 
 
-def _iter_selections(market: Any):
+def _iter_selections(market: Any, odds_format: str = "american"):
     """Yield ``(outcome, price, line, raw)`` from a market node."""
     if isinstance(market, dict):
         base_line = _first(market, "point", "line", "handicap", "total", "hdp", default="")
@@ -145,13 +159,17 @@ def _iter_selections(market: Any):
             name = f"{player} {name}"
         elif player:
             name = player
-        price = _price(_first(item, "price", "odds", "decimal", "decimal_odds", "american"))
+        price = _price(
+            _first(item, "price", "odds", "decimal", "decimal_odds", "american"), odds_format
+        )
         line = _first(item, "point", "line", "handicap", "total", "hdp", default=base_line)
         if name and price is not None:
             yield name, price, ("" if line in (None, "") else str(line)), item
 
 
-def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> list:
+def parse_quotes(
+    payload: Any, *, default_event_id: Optional[str] = None, odds_format: str = "american"
+) -> list:
     quotes: list = []
     seen: set = set()
     for block in _as_list(payload):
@@ -163,8 +181,14 @@ def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> lis
         if not event_id:
             continue
         for book, container in _iter_books(block):
+            book_ts = parse_timestamp(
+                _first(block, "last_update", "updated_at", default=None)
+            )
             for market_name, market in _iter_markets(container):
-                for outcome, price, line, raw in _iter_selections(market):
+                market_ts = parse_timestamp(
+                    _first(market, "last_update", "updated_at", "timestamp", default=None)
+                ) if isinstance(market, dict) else None
+                for outcome, price, line, raw in _iter_selections(market, odds_format):
                     bookmaker = (
                         _text(_first(raw, "book", "bookmaker", "sportsbook")).lower() or book
                     )
@@ -179,7 +203,9 @@ def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> lis
                         odds=price,
                         updated_ts=parse_timestamp(
                             _first(raw, "updated_at", "last_update", "timestamp", default=None)
-                        ),
+                        )
+                        or market_ts
+                        or book_ts,
                     )
                     if quote.key in seen:
                         continue
@@ -188,9 +214,9 @@ def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> lis
     return quotes
 
 
-def market_catalogue(payload: Any) -> dict:
+def market_catalogue(payload: Any, odds_format: str = "american") -> dict:
     catalogue: dict = {}
-    for quote in parse_quotes(payload):
+    for quote in parse_quotes(payload, odds_format=odds_format):
         entry = catalogue.setdefault(quote.market, {})
         entry[quote.bookmaker] = entry.get(quote.bookmaker, 0) + 1
     return catalogue
@@ -208,6 +234,7 @@ class ParlayApiClient:
         budget=None,
         prop_markets: Sequence[str] = (),
         default_sport: str = "",
+        odds_format: str = "american",
         **_ignored,
     ):
         self.api_key = api_key
@@ -216,6 +243,7 @@ class ParlayApiClient:
         self.budget = budget
         self.prop_markets = tuple(prop_markets)
         self.default_sport = default_sport
+        self.odds_format = odds_format
         self.supports_multi = True
         self.credits_remaining: Optional[int] = None
 
@@ -310,10 +338,10 @@ class ParlayApiClient:
 
     # -- interface parity -------------------------------------------------
     def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = "") -> list:
-        return parse_quotes(self.get_odds_payloads(event_ids, bookmakers, sport=sport))
+        return self.parse_quotes(self.get_odds_payloads(event_ids, bookmakers, sport=sport))
 
     def get_event_odds(self, event_id: str, bookmakers: Sequence[str], *, sport: str = "") -> list:
-        return parse_quotes(
+        return self.parse_quotes(
             self.get_event_odds_raw(event_id, bookmakers, sport=sport), default_event_id=event_id
         )
 
@@ -323,10 +351,10 @@ class ParlayApiClient:
     def get_multi_odds_raw(self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = "") -> Any:
         return self.get_odds_payloads(event_ids, bookmakers, sport=sport)
 
-    @staticmethod
-    def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> list:
-        return parse_quotes(payload, default_event_id=default_event_id)
+    def parse_quotes(self, payload: Any, *, default_event_id: Optional[str] = None) -> list:
+        return parse_quotes(
+            payload, default_event_id=default_event_id, odds_format=self.odds_format
+        )
 
-    @staticmethod
-    def market_catalogue(payload: Any) -> dict:
-        return market_catalogue(payload)
+    def market_catalogue(self, payload: Any) -> dict:
+        return market_catalogue(payload, odds_format=self.odds_format)
