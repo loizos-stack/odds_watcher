@@ -219,3 +219,27 @@ def test_event_blocks_are_not_mistaken_for_listings():
     }]})
     assert len(quotes) == 1
     assert quotes[0].bookmaker == "bet365"
+
+
+def test_allowance_is_read_from_headers_or_body(monkeypatch):
+    """Their demo reports the figure in the body, not a header."""
+    cases = [
+        (([], {"x-ratelimit-remaining": "873"}), 873),
+        (([], {"ratelimit-remaining": "500"}), 500),
+        (({"requests_remaining": 412, "events": []}, {}), 412),
+        (({"demo_remaining_hour": 59, "events": []}, {}), 59),
+    ]
+    for response, expected in cases:
+        monkeypatch.setattr(
+            "odds_watcher.parlayapi.request_json_with_headers", lambda url, _r=response, **kw: _r
+        )
+        client = ParlayApiClient("k")
+        client.fetch_quota()
+        assert client.credits_remaining == expected, response
+
+
+def test_allowance_stays_unknown_when_nothing_reports_it(monkeypatch):
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers",
+                        lambda url, **kw: ({"events": []}, {}))
+    client = ParlayApiClient("k")
+    assert client.fetch_quota()["remaining"] is None

@@ -256,14 +256,42 @@ class ParlayApiClient:
         data, headers = request_json_with_headers(
             url, timeout=self.timeout, headers={"X-API-Key": self.api_key}
         )
-        for header in ("x-ratelimit-remaining", "x-requests-remaining"):
+        self._read_allowance(data, headers)
+        return data
+
+    def _read_allowance(self, data: Any, headers: dict) -> None:
+        """Record the remaining allowance from wherever the API reports it.
+
+        Headers first, then the body: their demo response carries the figure as
+        a field (``demo_remaining_hour``) rather than a header, so an
+        authenticated response may do the same.
+        """
+        for header in (
+            "x-ratelimit-remaining",
+            "x-requests-remaining",
+            "x-ratelimit-remaining-month",
+            "ratelimit-remaining",
+        ):
             if header in headers:
                 try:
                     self.credits_remaining = int(float(headers[header]))
+                    return
                 except (TypeError, ValueError):
                     pass
-                break
-        return data
+        if isinstance(data, dict):
+            for field in (
+                "requests_remaining",
+                "remaining_requests",
+                "quota_remaining",
+                "remaining",
+                "demo_remaining_hour",
+            ):
+                if field in data:
+                    try:
+                        self.credits_remaining = int(float(data[field]))
+                        return
+                    except (TypeError, ValueError):
+                        pass
 
     def fetch_quota(self) -> dict:
         """The provider's own remaining allowance, from response headers.

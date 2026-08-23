@@ -516,6 +516,12 @@ def cmd_usage(config: Config, check_balance: bool = False) -> int:
         print("\n· account balance not checked (costs one request): "
               "py -m odds_watcher usage --check-balance")
 
+    if quota is not None and quota.get("remaining") is None:
+        print(
+            "\n· the provider did not report a remaining allowance in its response.\n"
+            "  Check it on your account dashboard; the local figures above are this\n"
+            "  watcher's own count of requests it made, not the provider's."
+        )
     if quota and quota.get("remaining") is not None:
         remaining = quota["remaining"]
         print(f"\naccount credits: {remaining} remaining, {quota.get('used')} used")

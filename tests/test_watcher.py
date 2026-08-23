@@ -810,3 +810,28 @@ def test_balance_check_is_automatic_when_it_is_free(config, capsys, monkeypatch,
     monkeypatch.setattr(cli, "_components", lambda c: (store, budget, FreeQuota(), None))
     cli.cmd_usage(dataclasses.replace(config, odds_provider="the-odds-api"))
     assert "19000 remaining" in capsys.readouterr().out
+
+
+def test_unknown_balance_is_said_out_loud(config, capsys, monkeypatch, tmp_path):
+    """A balance check that answers nothing must not print nothing."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.store import RequestBudget, Store
+
+    class Silent:
+        budget = None
+
+        def fetch_quota(self):
+            return {"remaining": None}
+
+    def components(cfg_):
+        store = Store(tmp_path / "silent.db")
+        return store, RequestBudget(store, 100, 100), Silent(), None
+
+    monkeypatch.setattr(cli, "_components", components)
+    cli.cmd_usage(dataclasses.replace(config, odds_provider="parlay-api"), check_balance=True)
+
+    out = capsys.readouterr().out
+    assert "did not report a remaining allowance" in out
+    assert "not the provider's" in out
