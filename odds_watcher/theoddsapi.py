@@ -123,15 +123,17 @@ class TheOddsApiClient:
     def get_bookmakers(self) -> list:
         """Bookmaker keys, discovered from a sample of live odds.
 
-        There is no bookmakers endpoint; the keys appear inside odds responses,
-        so this samples one and reports what it finds.
+        There is no bookmakers endpoint here; the keys appear inside odds
+        responses. Which books appear depends entirely on REGIONS — bet365 is
+        in uk/eu, DraftKings and FanDuel in us — so this samples the sport that
+        is actually configured, and costs one featured call.
         """
+        sport = self.default_sport or "upcoming"
         rows: set = set()
-        for sport, _title in self.get_sports()[:1] or [("upcoming", "")]:
-            for block in self._featured_odds(sport) or []:
-                for book in block.get("bookmakers", []) or []:
-                    if isinstance(book, dict) and book.get("key"):
-                        rows.add((str(book["key"]), str(book.get("title") or book["key"])))
+        for block in self._featured_odds(sport) or []:
+            for book in block.get("bookmakers", []) or []:
+                if isinstance(book, dict) and book.get("key"):
+                    rows.add((str(book["key"]), str(book.get("title") or book["key"])))
         return sorted(rows)
 
     def get_selected_bookmakers(self) -> list:

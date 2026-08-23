@@ -181,3 +181,31 @@ def test_budget_refuses_a_call_it_cannot_cover(monkeypatch, tmp_path):
     with pytest.raises(BudgetExceeded):
         client._featured_odds("baseball_mlb")  # another 3 would not fit
     store.close()
+
+
+def test_bookmakers_are_sampled_from_the_configured_sport(monkeypatch):
+    """Sampling an unrelated sport would list the wrong books."""
+    seen = []
+
+    def fake(url, **kw):
+        seen.append(url)
+        return payload(), {}
+
+    monkeypatch.setattr("odds_watcher.theoddsapi.request_json_with_headers", fake)
+    client = TheOddsApiClient("k", default_sport="baseball_mlb")
+    rows = client.get_bookmakers()
+
+    assert any("/sports/baseball_mlb/odds" in url for url in seen)
+    assert not any("/sports/americanfootball" in url for url in seen)
+    assert ("draftkings", "DraftKings") in rows
+    assert ("betfair_ex_uk", "Betfair") in rows
+
+
+def test_bookmakers_fall_back_to_upcoming_without_a_sport(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "odds_watcher.theoddsapi.request_json_with_headers",
+        lambda url, **kw: (seen.append(url), ([], {}))[1],
+    )
+    TheOddsApiClient("k").get_bookmakers()
+    assert any("/sports/upcoming/odds" in url for url in seen)
