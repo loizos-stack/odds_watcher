@@ -259,3 +259,19 @@ def test_all_sports_is_recognised():
     for value in ("all", "ALL", "*"):
         assert Config.from_env({**BASE, "SPORTS": value}).wants_all_sports
     assert not Config.from_env({**BASE, "SPORTS": "baseball_mlb"}).wants_all_sports
+
+
+def test_logging_goes_to_stdout(monkeypatch):
+    """PowerShell renders a native command's stderr as errors; logs are not."""
+    import logging
+    import sys
+
+    from odds_watcher.cli import setup_logging
+
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    setup_logging("INFO")
+
+    streams = [getattr(h, "stream", None) for h in logging.root.handlers]
+    assert sys.stdout in streams
+    assert sys.stderr not in streams

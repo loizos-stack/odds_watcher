@@ -164,6 +164,9 @@ docker build -t odds-watcher .
 docker run -d --name odds-watcher --env-file .env -v odds-data:/data odds-watcher
 ```
 
+Logs go to stdout, so `... | Tee-Object -FilePath watcher.log` in PowerShell
+records them without PowerShell reporting healthy output as `NativeCommandError`.
+
 **Windows** — start a dry run at a set time, or register a scheduled task:
 
 ```powershell

@@ -118,10 +118,19 @@ def force_utf8_output() -> None:
 
 
 def setup_logging(level: str) -> None:
+    """Send logs to stdout.
+
+    Python logs to stderr by default, and PowerShell renders anything a native
+    command writes there as a NativeCommandError record — so a perfectly
+    healthy run looks like a wall of red. These lines are this tool's primary
+    output, not errors, so stdout is where they belong; genuine failures are
+    still printed to stderr by the commands themselves.
+    """
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stdout,
     )
 
 
