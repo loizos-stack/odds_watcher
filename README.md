@@ -103,6 +103,7 @@ python -m odds_watcher status              # provider, budget, and any settings
                                            #   your .env is missing
 python -m odds_watcher bookmakers          # valid bookmaker identifiers
 python -m odds_watcher leagues --search x  # valid league identifiers
+python -m odds_watcher sports --all        # every competition, in and out of season
 python -m odds_watcher markets             # market names the books actually offer
 python -m odds_watcher coverage            # per-league: which books price what
 python -m odds_watcher props               # do props need per-fixture requests?
@@ -258,7 +259,7 @@ detection, storage, alerting — is identical either way.
 | Bookmakers | selected on the account (2 on free) | chosen per request, via `REGIONS`/`BOOKMAKERS` |
 | Featured markets | all markets in one batched call | one call per sport (`h2h,spreads,totals`) |
 | Player props | in the same payload | **per fixture only**, charged per fixture |
-| Leagues | separate league slugs | folded into the sport key (`baseball_mlb`) |
+| Leagues | separate league slugs, `leagues` command | folded into the sport key; use `sports --all` |
 
 ### The credit arithmetic on The Odds API
 

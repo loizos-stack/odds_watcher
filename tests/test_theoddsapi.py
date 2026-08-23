@@ -209,3 +209,33 @@ def test_bookmakers_fall_back_to_upcoming_without_a_sport(monkeypatch):
     )
     TheOddsApiClient("k").get_bookmakers()
     assert any("/sports/upcoming/odds" in url for url in seen)
+
+
+def test_all_flag_requests_out_of_season_sports(monkeypatch):
+    """"All available leagues" needs the out-of-season ones too."""
+    seen = []
+    monkeypatch.setattr(
+        "odds_watcher.theoddsapi.request_json_with_headers",
+        lambda url, **kw: (seen.append(url), ([], {}))[1],
+    )
+    client = TheOddsApiClient("k")
+    client.get_sports()
+    client.get_sports(include_all=True)
+
+    assert "all=true" not in seen[0]
+    assert "all=true" in seen[1]
+
+
+def test_sports_listing_reads_key_title_and_group(monkeypatch):
+    monkeypatch.setattr(
+        "odds_watcher.theoddsapi.request_json_with_headers",
+        lambda url, **kw: ([
+            {"key": "baseball_mlb", "title": "MLB", "group": "Baseball", "active": True},
+            {"key": "soccer_epl", "title": "EPL", "group": "Soccer", "active": True},
+            {"no_key": 1},
+        ], {}),
+    )
+    rows = TheOddsApiClient("k").get_sports()
+    assert ("baseball_mlb", "MLB (Baseball)") in rows
+    assert ("soccer_epl", "EPL (Soccer)") in rows
+    assert len(rows) == 2

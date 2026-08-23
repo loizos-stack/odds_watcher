@@ -102,9 +102,13 @@ class TheOddsApiClient:
         return max(len(markets), 1) * max(len(self.regions), 1)
 
     # -- listings ---------------------------------------------------------
-    def get_sports(self) -> list:
-        """In-season sports. This endpoint does not consume credits."""
-        payload = self._call("sports", metered=False) or []
+    def get_sports(self, include_all: bool = False) -> list:
+        """Sports, which here are the competitions themselves (baseball_mlb).
+
+        Only in-season ones are returned unless ``include_all`` is set. This
+        endpoint does not consume credits either way.
+        """
+        payload = self._call("sports", {"all": "true"} if include_all else None, metered=False) or []
         rows = []
         for item in payload:
             if isinstance(item, dict) and item.get("key"):

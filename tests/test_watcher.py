@@ -560,3 +560,29 @@ def test_exhausted_local_budget_is_a_message_not_a_traceback(config, capsys, mon
     assert "local budget cannot cover" in err
     assert "watcher's own cap, not the provider's" in err
     assert "--reset-budget" in err
+
+
+def test_leagues_falls_back_to_the_sports_listing(config, capsys, monkeypatch):
+    """On The Odds API the sport key *is* the competition — answer, don't error."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.theoddsapi import UnsupportedByProvider
+
+    class V4Api:
+        budget = None
+
+        def get_leagues(self, sport):
+            raise UnsupportedByProvider("The Odds API has no separate league list")
+
+        def get_sports(self, include_all=False):
+            assert include_all is True
+            return [("baseball_mlb", "MLB (Baseball)"), ("soccer_epl", "EPL (Soccer)")]
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, V4Api(), None))
+    cfg = dataclasses.replace(config, odds_provider="the-odds-api")
+
+    assert cli.cmd_leagues(cfg) == 0
+    out = capsys.readouterr().out
+    assert "no separate league list" in out
+    assert "baseball_mlb" in out and "soccer_epl" in out

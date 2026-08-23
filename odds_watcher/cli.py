@@ -69,6 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-file", default=".env", help="path to the .env file (default: .env)")
     parser.add_argument("--log-level", default=None, help="override LOG_LEVEL")
     parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="include_all",
+        help="include out-of-season competitions in the `sports` listing",
+    )
+    parser.add_argument(
         "--reset-budget",
         action="store_true",
         help="clear the watcher's local request/credit tally (status)",
@@ -222,18 +228,21 @@ def _print_rows(rows: list, noun: str, setting: str, search: Optional[str]) -> i
     return 0
 
 
-def cmd_sports(config: Config, search: Optional[str] = None) -> int:
+def cmd_sports(config: Config, search: Optional[str] = None, include_all: bool = False) -> int:
     """List the sport identifiers the API recognises, for SPORTS."""
     store, _, api, _ = _components(config)
     try:
-        rows = api.get_sports()
+        rows = api.get_sports(include_all=include_all)
     except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not list sports: {exc}", file=sys.stderr)
         _budget_hint(config, exc)
         return 1
     finally:
         store.close()
-    return _print_rows(rows, "sport(s)", "SPORTS", search)
+    result = _print_rows(rows, "sport(s)", "SPORTS", search)
+    if result == 0 and config.odds_provider == "the-odds-api" and not include_all:
+        print("In-season only — add --all to include out-of-season competitions.")
+    return result
 
 
 def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
@@ -244,8 +253,8 @@ def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
         for sport in config.sports:
             rows.extend(api.get_leagues(sport))
     except UnsupportedByProvider as exc:
-        print(f"! {exc}", file=sys.stderr)
-        return 1
+        print(f"! {exc}\n")
+        return cmd_sports(config, search, include_all=True)
     except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not list leagues: {exc}", file=sys.stderr)
         _budget_hint(config, exc)
@@ -884,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "bookmakers":
         return cmd_bookmakers(config, args.search)
     if args.command == "sports":
-        return cmd_sports(config, args.search)
+        return cmd_sports(config, args.search, args.include_all)
     if args.command == "leagues":
         return cmd_leagues(config, args.search)
     if args.command == "probe":

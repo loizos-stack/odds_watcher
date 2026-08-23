@@ -423,8 +423,12 @@ class OddsApiClient:
                 rows.append((str(identifier), label))
         return sorted(set(rows))
 
-    def get_sports(self) -> list[tuple[str, str]]:
-        """Sports the API covers, as ``(identifier, display name)`` for SPORTS."""
+    def get_sports(self, include_all: bool = False) -> list[tuple[str, str]]:
+        """Sports the API covers, as ``(identifier, display name)`` for SPORTS.
+
+        ``include_all`` is accepted for interface parity; this provider always
+        returns its full list.
+        """
         return self._identifier_rows(self._call("sports"), ("slug", "id", "key", "sport", "name"))
 
     def get_leagues(self, sport: str) -> list[tuple[str, str]]:
