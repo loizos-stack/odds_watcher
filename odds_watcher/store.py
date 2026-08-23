@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS line_state (
     alert_ts      REAL,
     alert_count   INTEGER NOT NULL DEFAULT 0,
     event_start   REAL NOT NULL,
+    event_name    TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (event_id, bookmaker, market, line, outcome)
 );
 
@@ -106,6 +107,12 @@ class Store:
         if "cost" not in columns:
             # Databases created before metered providers counted one per call.
             self.conn.execute("ALTER TABLE api_calls ADD COLUMN cost INTEGER NOT NULL DEFAULT 1")
+        line_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(line_state)")}
+        if "event_name" not in line_columns:
+            # Recorded so a movement report can name the fixture.
+            self.conn.execute(
+                "ALTER TABLE line_state ADD COLUMN event_name TEXT NOT NULL DEFAULT ''"
+            )
 
     def commit(self) -> None:
         """Flush pending writes.
@@ -147,6 +154,7 @@ class Store:
         event_start: float,
         ts: Optional[float] = None,
         existing: Optional[LineState] = None,
+        event_name: str = "",
     ) -> None:
         """Insert or update the stored price for a quote.
 
@@ -166,9 +174,10 @@ class Store:
             self.conn.execute(
                 """INSERT INTO line_state
                    (event_id, bookmaker, market, line, outcome, baseline_odds, baseline_ts,
-                    baseline_pre_window, last_odds, last_ts, event_start)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (*quote.key, quote.odds, ts, int(pre_window), quote.odds, ts, event_start),
+                    baseline_pre_window, last_odds, last_ts, event_start, event_name)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (*quote.key, quote.odds, ts, int(pre_window), quote.odds, ts, event_start,
+                 event_name),
             )
             return
 
@@ -195,6 +204,38 @@ class Store:
             (quote.odds, ts, *quote.key),
         )
         self.conn.commit()
+
+    def movements(self, since_ts: float = 0.0, limit: int = 40) -> list:
+        """Every tracked line with how far it moved, biggest drop first.
+
+        Reports what the prices actually did regardless of the alert
+        threshold, which is the only way to tell "nothing moved" apart from
+        "the threshold is too high".
+        """
+        rows = self.conn.execute(
+            """SELECT event_name, event_id, bookmaker, market, line, outcome,
+                      baseline_odds, last_odds, alert_count, event_start
+               FROM line_state
+               WHERE event_start >= ? AND baseline_odds > 0
+               ORDER BY (baseline_odds - last_odds) / baseline_odds DESC
+               LIMIT ?""",
+            (since_ts, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def movement_summary(self, since_ts: float = 0.0) -> dict:
+        """Counts of tracked lines by how far each moved."""
+        row = self.conn.execute(
+            """SELECT
+                 COUNT(*) AS tracked,
+                 SUM(CASE WHEN last_odds < baseline_odds THEN 1 ELSE 0 END) AS fell,
+                 SUM(CASE WHEN last_odds > baseline_odds THEN 1 ELSE 0 END) AS rose,
+                 SUM(CASE WHEN last_odds = baseline_odds THEN 1 ELSE 0 END) AS flat,
+                 MAX((baseline_odds - last_odds) / baseline_odds) AS biggest_drop
+               FROM line_state WHERE event_start >= ? AND baseline_odds > 0""",
+            (since_ts,),
+        ).fetchone()
+        return dict(row) if row else {}
 
     def purge(self, older_than_ts: float) -> int:
         """Drop state for events that kicked off long ago."""

@@ -42,6 +42,7 @@ REQUIRED_CREDENTIALS = {
     "coverage": ("ODDS_API_KEY",),
     "props": ("ODDS_API_KEY",),
     "usage": ("ODDS_API_KEY",),
+    "movements": (),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -56,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "chat-id", "status"],
     )
     parser.add_argument(
         "--sport",
@@ -494,6 +495,47 @@ def _report_missing_settings(env_file: Path) -> None:
     print("  their defaults apply. Copy across any you want to change:")
     for key in missing:
         print(f"    {key}")
+
+
+def cmd_movements(config: Config, limit: int = 25) -> int:
+    """Show how far every tracked price actually moved.
+
+    Silence has two very different causes — nothing moved, or the threshold is
+    above what does move — and they are indistinguishable from the alert log
+    alone. This reads what was recorded, regardless of MIN_DROP_PCT.
+    """
+    store, _, _, _ = _components(config)
+    summary = store.movement_summary()
+    rows = store.movements(limit=limit)
+    store.close()
+
+    tracked = summary.get("tracked") or 0
+    if not tracked:
+        print("no prices recorded yet — run the watcher through a slate first")
+        return 1
+
+    biggest = (summary.get("biggest_drop") or 0) * 100
+    print(f"{tracked} tracked line(s): {summary.get('fell') or 0} fell, "
+          f"{summary.get('rose') or 0} rose, {summary.get('flat') or 0} unchanged")
+    print(f"largest drop recorded: {biggest:.2f}%   (your threshold: {config.min_drop_pct:.1f}%)\n")
+
+    width = min(max((len(r["event_name"] or r["event_id"]) for r in rows), default=10), 34)
+    print(f"  {'fixture'.ljust(width)}  {'book':<12} {'market':<10} {'outcome':<18} "
+          f"{'from':>7} {'to':>7} {'move':>8}")
+    for row in rows:
+        base, last = row["baseline_odds"], row["last_odds"]
+        move = (last - base) / base * 100 if base else 0
+        name = (row["event_name"] or row["event_id"])[:width]
+        flag = " *" if row["alert_count"] else ""
+        print(f"  {name.ljust(width)}  {row['bookmaker'][:12]:<12} {row['market'][:10]:<10} "
+              f"{row['outcome'][:18]:<18} {base:>7.2f} {last:>7.2f} {move:>7.2f}%{flag}")
+
+    if biggest < config.min_drop_pct:
+        print(f"\n! nothing moved as far as {config.min_drop_pct:.1f}%. The largest drop was "
+              f"{biggest:.2f}%,")
+        print(f"  so MIN_DROP_PCT={max(round(biggest * 0.6, 1), 0.5)} would have signalled the "
+              "sharpest moves.")
+    return 0
 
 
 def cmd_usage(config: Config, check_balance: bool = False) -> int:
@@ -1095,6 +1137,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_props(config)
     if args.command == "chat-id":
         return cmd_chat_id(config)
+    if args.command == "movements":
+        return cmd_movements(config)
     if args.command == "usage":
         return cmd_usage(config, args.check_balance)
     if args.command == "status":

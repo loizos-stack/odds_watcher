@@ -100,7 +100,13 @@ class DropDetector:
             return []
 
         first_seen_mode = cfg.baseline_mode == "first-seen"
-        if first_seen_mode:
+        last_seen_mode = cfg.baseline_mode == "last-seen"
+        if last_seen_mode:
+            # Compare each price with the one recorded before it: the most
+            # sensitive rule, catching a move between any two consecutive polls.
+            pre_window = True
+            in_window = cfg.window_end_seconds <= seconds <= cfg.window_start_seconds
+        elif first_seen_mode:
             # The first price recorded is the reference and never moves, so the
             # whole tracked period is alertable.
             pre_window = False
@@ -121,13 +127,16 @@ class DropDetector:
                 event_start=event.start_ts,
                 ts=now,
                 existing=state,
+                event_name=event.name,
             )
 
-            has_reference = state is not None and (first_seen_mode or state.baseline_pre_window)
+            has_reference = state is not None and (
+                first_seen_mode or last_seen_mode or state.baseline_pre_window
+            )
             if not in_window or not has_reference:
                 continue
 
-            reference = state.reference_odds
+            reference = state.last_odds if last_seen_mode else state.reference_odds
             change = drop_pct(reference, quote.odds)
             if change < cfg.min_drop_pct:
                 continue

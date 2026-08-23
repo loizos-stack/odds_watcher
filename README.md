@@ -17,14 +17,15 @@ Odds: 2.00 → 1.80 (-10.0%)
 
 ## How it decides to alert
 
-`BASELINE_MODE` picks between two rules:
+`BASELINE_MODE` picks between three rules:
 
-| | `window-entry` (default) | `first-seen` |
-| --- | --- | --- |
-| Reference price | last price before the window opens | first price recorded for the line |
-| When a signal can fire | only inside the alert window | any time from the start of tracking to kick-off |
-| Tracked period set by | `WINDOW_START_SECONDS` | `BASELINE_LEAD_SECONDS` |
-| A drop finishing before the window | ignored | signalled |
+| | `window-entry` (default) | `first-seen` | `last-seen` |
+| --- | --- | --- | --- |
+| Reference price | last price before the window opens | first price recorded for the line | the previous recorded price |
+| When a signal can fire | only inside the alert window | any time from the start of tracking to kick-off | only inside the alert window |
+| Tracked period set by | `WINDOW_START_SECONDS` | `BASELINE_LEAD_SECONDS` | `WINDOW_START_SECONDS` |
+| A drop finishing before the window | ignored | signalled | ignored |
+| A slow grind of small steps | signalled once it totals the threshold | signalled | **never** — each step is below it |
 
 In both modes the reference resets to the signalled price after each alert, so
 a line sliding 2.00 → 1.89 → 1.79 → 1.69 produces three separate signals rather
@@ -443,6 +444,32 @@ everything: `REGIONS=us,uk` doubles the bill.
 `MAX_REQUESTS_PER_HOUR` / `_PER_DAY` are enforced locally in credits for this
 provider, and `check` prints the account balance from the
 `x-requests-remaining` header.
+
+## When nothing signals
+
+Silence has two very different causes: the prices did not move, or they moved
+less than `MIN_DROP_PCT`. The alert log cannot tell them apart, so the recorded
+prices are reported directly:
+
+```bash
+python -m odds_watcher movements
+```
+
+```
+9 tracked line(s): 6 fell, 1 rose, 2 unchanged
+largest drop recorded: 5.33%   (your threshold: 10.0%)
+
+  fixture                book         market   outcome      from      to     move
+  Dodgers vs Padres      bet365       h2h      Dodgers      1.50    1.42   -5.33%
+  Phillies vs Cardinals  fanduel      h2h      Phillies     1.77    1.69   -4.52%
+  ...
+! nothing moved as far as 10.0%. The largest drop was 5.33%,
+  so MIN_DROP_PCT=3.2 would have signalled the sharpest moves.
+```
+
+Moneylines at major books move in low single digits in the final minutes; a
+10% shortening is a rarity there, whatever it looks like on longer-priced
+markets. Set the threshold from this report rather than from intuition.
 
 ## Coverage comes first
 

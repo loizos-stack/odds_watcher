@@ -1,5 +1,7 @@
 """Persistence: baselines survive restarts, budget is enforced across runs."""
 
+import pytest
+
 from odds_watcher.odds_api import Quote
 from odds_watcher.store import RequestBudget, Store
 
@@ -174,3 +176,52 @@ def test_market_keys_update_in_place(store):
     assert store.get_market_keys("baseball_mlb", max_age=3600, now=1001)[0] == []
     store.save_market_keys("baseball_mlb", {"batter_hits": True}, now=1002)
     assert store.get_market_keys("baseball_mlb", max_age=3600, now=1003)[0] == ["batter_hits"]
+
+
+def test_movement_report_ranks_by_drop(store):
+    for name, book, base, last in [
+        ("A vs B", "bet365", 2.00, 1.80),      # -10%
+        ("A vs B", "draftkings", 2.00, 1.98),  # -1%
+        ("C vs D", "fanduel", 2.00, 2.20),     # +10%
+    ]:
+        q = Quote("e1" if name == "A vs B" else "e2", book, "h2h", "", "Home", base)
+        store.record(q, pre_window=True, event_start=1000, ts=1, event_name=name)
+        store.record(Quote(q.event_id, book, "h2h", "", "Home", last),
+                     pre_window=False, event_start=1000, ts=2)
+    store.commit()
+
+    rows = store.movements()
+    assert rows[0]["bookmaker"] == "bet365"      # biggest drop first
+    assert rows[-1]["bookmaker"] == "fanduel"    # the riser is last
+    assert rows[0]["event_name"] == "A vs B"
+
+    summary = store.movement_summary()
+    assert summary["tracked"] == 3
+    assert summary["fell"] == 2 and summary["rose"] == 1
+    assert summary["biggest_drop"] == pytest.approx(0.10)
+
+
+def test_movement_report_survives_an_old_database(tmp_path):
+    """An existing install has no event_name column."""
+    import sqlite3
+
+    path = tmp_path / "legacy_lines.db"
+    legacy = sqlite3.connect(str(path))
+    legacy.executescript(
+        """CREATE TABLE line_state (
+             event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, market TEXT NOT NULL,
+             line TEXT NOT NULL, outcome TEXT NOT NULL, baseline_odds REAL NOT NULL,
+             baseline_ts REAL NOT NULL, baseline_pre_window INTEGER NOT NULL DEFAULT 0,
+             last_odds REAL NOT NULL, last_ts REAL NOT NULL, alert_odds REAL,
+             alert_ts REAL, alert_count INTEGER NOT NULL DEFAULT 0, event_start REAL NOT NULL,
+             PRIMARY KEY (event_id, bookmaker, market, line, outcome));
+           INSERT INTO line_state VALUES
+             ('e1','bet365','h2h','','Home',2.0,1,1,1.8,2,NULL,NULL,0,1000);"""
+    )
+    legacy.commit(); legacy.close()
+
+    store = Store(path)
+    rows = store.movements()
+    assert len(rows) == 1
+    assert rows[0]["event_name"] == ""   # backfilled as empty, not a crash
+    store.close()

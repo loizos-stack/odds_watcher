@@ -321,3 +321,36 @@ def test_cascading_ten_percent_drops_inside_the_window(config, store):
             store.mark_alerted(alert.quote, ts=at(minutes))
 
     assert signals == [(2.00, 1.79), (1.79, 1.60), (1.60, 1.43)]
+
+
+def _last_seen(config):
+    import dataclasses
+
+    return dataclasses.replace(config, baseline_mode="last-seen", baseline_lead_seconds=1200)
+
+
+def test_last_seen_compares_with_the_previous_price(config, store):
+    """Every poll is measured against the one before it."""
+    detector = DropDetector(_last_seen(config), store)
+    detector.process(EVENT, [quote(2.00)], at(12))   # watch period, recorded
+    detector.process(EVENT, [quote(1.95)], at(9))    # -2.5%, no signal
+
+    alerts = detector.process(EVENT, [quote(1.70)], at(7))   # -12.8% from 1.95
+    assert alerts[0].reference_odds == 1.95
+    assert alerts[0].drop_pct == pytest.approx(12.82, abs=0.01)
+
+
+def test_last_seen_signals_only_inside_the_window(config, store):
+    detector = DropDetector(_last_seen(config), store)
+    detector.process(EVENT, [quote(2.00)], at(18))
+    assert detector.process(EVENT, [quote(1.60)], at(15)) == []  # -20% but too early
+
+
+def test_last_seen_ignores_a_slow_grind(config, store):
+    """Small steps never trigger, even when they add up to a large move."""
+    detector = DropDetector(_last_seen(config), store)
+    prices = [2.00, 1.94, 1.88, 1.83, 1.78, 1.73]
+    signals = []
+    for index, price in enumerate(prices):
+        signals += detector.process(EVENT, [quote(price)], at(9 - index))
+    assert signals == []   # each step is about 3%, the total is 13.5%

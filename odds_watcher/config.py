@@ -109,6 +109,8 @@ class Config:
     #                    movement inside the window can alert.
     #   "first-seen"   - the first price recorded for the line; any drop from
     #                    the start of tracking until kick-off can alert.
+    #   "last-seen"    - the previous recorded price; every poll is compared
+    #                    with the one before it, inside the alert window.
     baseline_mode: str = "window-entry"
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
@@ -164,6 +166,11 @@ class Config:
 
     @property
     def alert_window_label(self) -> str:
+        if self.baseline_mode == "last-seen":
+            return (
+                f"{self.window_end_seconds // 60}-{self.window_start_seconds // 60} "
+                "min before kick-off (vs the previous price)"
+            )
         if self.baseline_mode == "first-seen":
             return (
                 f"{self.window_end_seconds // 60}-{self.baseline_lead_seconds // 60} "
@@ -202,10 +209,10 @@ class Config:
             )
 
         baseline_mode = env.get("BASELINE_MODE", "window-entry").strip().lower()
-        if baseline_mode not in ("window-entry", "first-seen"):
+        if baseline_mode not in ("window-entry", "first-seen", "last-seen"):
             raise ConfigError(
-                "BASELINE_MODE must be 'window-entry' or 'first-seen', got "
-                f"{baseline_mode!r}"
+                "BASELINE_MODE must be 'window-entry', 'first-seen' or "
+                f"'last-seen', got {baseline_mode!r}"
             )
 
         bookmakers = _csv(env.get("BOOKMAKERS", ",".join(DEFAULT_BOOKMAKERS)))
