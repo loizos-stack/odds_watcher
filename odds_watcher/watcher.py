@@ -21,7 +21,7 @@ from typing import Iterable, Optional, Sequence
 from .config import Config
 from .detector import Alert, DropDetector
 from .http import TransportError
-from .odds_api import BudgetExceeded, Event, OddsApiClient, Quote
+from .odds_api import BudgetExceeded, Event, Quote
 from .store import Store
 from .telegram import TelegramClient, format_digest
 from .util import format_countdown, now_ts
@@ -29,6 +29,7 @@ from .util import format_countdown, now_ts
 log = logging.getLogger(__name__)
 
 EVENTS_PER_ODDS_REQUEST = 20
+SPORTS_REFRESH_SECONDS = 86400
 ALERTS_PER_MESSAGE = 5
 STATE_RETENTION_SECONDS = 6 * 3600
 
@@ -42,7 +43,7 @@ class Watcher:
     def __init__(
         self,
         config: Config,
-        api: OddsApiClient,
+        api,  # any provider client from providers.build_client
         telegram: TelegramClient,
         store: Store,
         clock=now_ts,
@@ -57,6 +58,8 @@ class Watcher:
         self.detector = DropDetector(config, store)
         self._events: list[Event] = []
         self._events_fetched_at: float = 0.0
+        self._all_sports: tuple = ()
+        self._sports_fetched_at: float = 0.0
 
     # -- fixtures ---------------------------------------------------------
     def refresh_events(self, now: float, *, force: bool = False) -> list[Event]:
@@ -65,7 +68,8 @@ class Watcher:
             return self._events
 
         events: dict[str, Event] = {}
-        targets = [(sport, league) for sport in self.config.sports for league in (self.config.leagues or [None])]
+        sports = self.resolve_sports(now)
+        targets = [(sport, league) for sport in sports for league in (self.config.leagues or [None])]
         for sport, league in targets:
             try:
                 for event in self.api.get_events(sport, league=league):
@@ -86,6 +90,27 @@ class Watcher:
             self._events_fetched_at = now
             log.info("fixture list refreshed: %d event(s)", len(self._events))
         return self._events
+
+    def resolve_sports(self, now: float) -> tuple:
+        """The sports to poll, expanding "all" against the provider's listing.
+
+        The listing changes rarely, so it is fetched once a day rather than on
+        every fixture refresh — on a per-request provider each sport costs a
+        request per poll, and re-listing them would be pure overhead.
+        """
+        if not self.config.wants_all_sports:
+            return tuple(self.config.sports)
+        if self._all_sports and now - self._sports_fetched_at < SPORTS_REFRESH_SECONDS:
+            return self._all_sports
+        try:
+            rows = self.api.get_sports()
+        except (TransportError, BudgetExceeded) as exc:
+            log.error("could not list sports: %s", exc)
+            return self._all_sports
+        self._all_sports = tuple(key for key, _title in rows)
+        self._sports_fetched_at = now
+        log.info("watching %d sport(s): %s", len(self._all_sports), ", ".join(self._all_sports[:8]))
+        return self._all_sports
 
     def events_in_tracking_range(self, now: float) -> list[Event]:
         """Fixtures close enough to kick-off that their prices matter."""
@@ -206,7 +231,7 @@ class Watcher:
         cfg = self.config
         log.info(
             "watching %s on %s | alert when a price drops >= %.1f%% %s",
-            ", ".join(cfg.sports),
+            "all sports" if cfg.wants_all_sports else ", ".join(cfg.sports),
             ", ".join(cfg.bookmakers),
             cfg.min_drop_pct,
             cfg.alert_window_label,

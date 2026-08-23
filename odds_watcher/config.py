@@ -153,6 +153,11 @@ class Config:
     dry_run: bool = False
 
     @property
+    def wants_all_sports(self) -> bool:
+        """True when SPORTS asks for every competition the provider lists."""
+        return any(entry.strip().lower() in ("all", "*") for entry in self.sports)
+
+    @property
     def wants_all_markets(self) -> bool:
         """True when PROP_MARKETS asks for everything the sport offers."""
         return any(entry.strip().lower() in ("all", "*") for entry in self.prop_markets)

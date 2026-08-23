@@ -672,3 +672,70 @@ def test_usage_without_a_metered_provider(config, capsys, monkeypatch, tmp_path)
     out = capsys.readouterr().out
     assert "spent last hour: 0 requests" in out
     assert "account credits" not in out
+
+
+def test_all_sports_expands_from_the_provider_listing(config, store):
+    """SPORTS=all polls whatever the provider lists, refreshed daily."""
+    import dataclasses
+
+    class Catalogue(FakeApi):
+        def __init__(self):
+            super().__init__([], [])
+            self.sport_calls = 0
+
+        def get_sports(self, include_all=False):
+            self.sport_calls += 1
+            return [("baseball_mlb", "MLB"), ("soccer_epl", "EPL"), ("icehockey_nhl", "NHL")]
+
+        def get_events(self, sport, league=None, limit=None):
+            self.event_calls += 1
+            return [Event(id=f"{sport}-1", start_ts=KICKOFF, home="H", away="A", sport_key=sport)]
+
+    api = Catalogue()
+    cfg = dataclasses.replace(config, sports=("all",))
+    watcher = Watcher(cfg, api, FakeTelegram(), store)
+
+    watcher.refresh_events(at(30))
+    assert {e.sport_key for e in watcher._events} == {"baseball_mlb", "soccer_epl", "icehockey_nhl"}
+    assert api.sport_calls == 1
+
+    # The listing is cached for a day rather than re-fetched every refresh.
+    watcher.refresh_events(at(30) + config.events_refresh_seconds + 1)
+    assert api.sport_calls == 1
+
+
+def test_all_sports_survives_a_failed_listing(config, store):
+    """A failed listing must not wipe the sports already being watched."""
+    import dataclasses
+
+    from odds_watcher.http import TransportError
+
+    class Flaky(FakeApi):
+        def __init__(self):
+            super().__init__([], [])
+            self.fail = False
+
+        def get_sports(self, include_all=False):
+            if self.fail:
+                raise TransportError("listing unavailable")
+            return [("baseball_mlb", "MLB")]
+
+        def get_events(self, sport, league=None, limit=None):
+            return []
+
+    api = Flaky()
+    watcher = Watcher(dataclasses.replace(config, sports=("all",)), api, FakeTelegram(), store)
+    assert watcher.resolve_sports(at(30)) == ("baseball_mlb",)
+
+    api.fail = True
+    watcher._sports_fetched_at = 0  # force a refresh
+    assert watcher.resolve_sports(at(20)) == ("baseball_mlb",)
+
+
+def test_explicit_sports_never_call_the_listing(config, store):
+    class NoListing(FakeApi):
+        def get_sports(self, include_all=False):
+            raise AssertionError("should not list sports when SPORTS is explicit")
+
+    watcher = Watcher(config, NoListing([], []), FakeTelegram(), store)
+    assert watcher.resolve_sports(at(30)) == config.sports

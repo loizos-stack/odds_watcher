@@ -267,8 +267,10 @@ class ParlayApiClient:
 
     # -- listings ---------------------------------------------------------
     def get_sports(self, include_all: bool = False) -> list:
+        # Nothing documents this endpoint as free, so it is counted. Better to
+        # over-report local spend than to quietly overrun a 1,000/month tier.
         rows = []
-        for item in _as_list(self._call("v1/sports", metered=False)):
+        for item in _as_list(self._call("v1/sports")):
             if isinstance(item, str):
                 rows.append((item, item))
             elif isinstance(item, dict):
@@ -305,7 +307,7 @@ class ParlayApiClient:
 
     # -- events and odds --------------------------------------------------
     def get_events(self, sport: str, *, league: Optional[str] = None, limit: Optional[int] = None) -> list:
-        payload = self._call(f"v1/sports/{sport}/events", metered=False)
+        payload = self._call(f"v1/sports/{sport}/events")
         events = [parse_event(raw) for raw in _as_list(payload)]
         return [event for event in events if event is not None]
 

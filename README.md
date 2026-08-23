@@ -280,6 +280,26 @@ returns nothing — so each competition costs its own featured call per poll
 (3 credits x regions), plus its own props per fixture. Market keys are resolved
 per sport too, and every `soccer_*` league shares one key set.
 
+## Watching every sport
+
+`SPORTS=all` expands to whatever the provider lists, refreshed daily. On a
+per-request provider each sport costs a request per poll, and `PROP_MARKETS`
+adds a second, so the multiplier is real. Against ParlayAPI's 1,000/month free
+tier, with roughly 30 sports listed:
+
+| Setup | Requests/hour | Free tier lasts |
+| --- | ---: | --- |
+| 1 sport, no props, 60s | 60 | 16.7 h |
+| 1 sport, all props, 300s | 24 | 41.7 h |
+| all sports, no props, 60s | 1,800 | **33 min** |
+| all sports, all props, 60s | 3,600 | **17 min** |
+| all sports, all props, 300s | 720 | 1.4 h |
+| all sports, all props, 900s | 240 | 4.2 h |
+
+`MAX_REQUESTS_PER_HOUR` / `_PER_DAY` are the guardrail: the watcher throttles
+itself when they are reached rather than draining the account, and `usage`
+reports the burn rate against the balance.
+
 ## Requesting everything
 
 ```bash

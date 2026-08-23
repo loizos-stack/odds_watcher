@@ -253,3 +253,9 @@ def test_alert_label_describes_the_active_rule():
     first_seen = Config.from_env({**BASE, "BASELINE_MODE": "first-seen",
                                   "BASELINE_LEAD_SECONDS": "1200"})
     assert "0-20 min before kick-off (from first price seen)" == first_seen.alert_window_label
+
+
+def test_all_sports_is_recognised():
+    for value in ("all", "ALL", "*"):
+        assert Config.from_env({**BASE, "SPORTS": value}).wants_all_sports
+    assert not Config.from_env({**BASE, "SPORTS": "baseball_mlb"}).wants_all_sports
