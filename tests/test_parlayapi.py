@@ -369,3 +369,15 @@ def test_explicit_markets_are_narrowed_to_the_valid_ones(monkeypatch):
                              featured_markets=("h2h", "moonlines", "totals"))
     client._sport_odds("baseball_mlb")
     assert "markets=h2h%2Ctotals" in calls[1]
+
+
+def test_usage_keeps_the_raw_reply(monkeypatch):
+    """A bare "60 remaining" is ambiguous; the raw body disambiguates it."""
+    body = {"plan": "free", "period": "month", "used": 940, "limit": 1000, "remaining": 60}
+    monkeypatch.setattr(
+        "odds_watcher.parlayapi.request_json_with_headers", lambda url, **kw: (body, {})
+    )
+    quota = ParlayApiClient("k").fetch_quota()
+    assert quota["remaining"] == 60
+    assert quota["raw"] == body
+    assert quota["raw"]["period"] == "month"

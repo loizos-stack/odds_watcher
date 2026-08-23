@@ -606,6 +606,14 @@ def cmd_usage(config: Config, check_balance: bool = False) -> int:
             "  Check it on your account dashboard; the local figures above are this\n"
             "  watcher's own count of requests it made, not the provider's."
         )
+    if quota and quota.get("raw") is not None and check_balance:
+        # "60 remaining" means very different things per hour and per month;
+        # the raw reply is the only place that distinction is visible.
+        import json as _json
+
+        print("\nprovider's usage response:")
+        print("  " + _json.dumps(quota["raw"])[:600])
+
     if quota and quota.get("remaining") is not None:
         remaining = quota["remaining"]
         print(f"\naccount credits: {remaining} remaining, {quota.get('used')} used")

@@ -338,6 +338,7 @@ class ParlayApiClient:
         self.supports_multi = True
         self.credits_remaining: Optional[int] = None
         self._game_market_cache: dict = {}
+        self.last_usage_payload: Any = None
 
     # -- plumbing ---------------------------------------------------------
     def _call(self, path: str, params: Optional[dict] = None, *, metered: bool = True) -> Any:
@@ -392,6 +393,7 @@ class ParlayApiClient:
         is left because the local cap is spent is exactly backwards.
         """
         data = self._call("v1/usage", metered=False)
+        self.last_usage_payload = data
         remaining = self.credits_remaining
         used = None
         limit = None
@@ -412,7 +414,13 @@ class ParlayApiClient:
         if remaining is None and limit is not None and used is not None:
             remaining = limit - used
         self.credits_remaining = remaining
-        return {"remaining": remaining, "used": used, "limit": limit, "last_call": None}
+        return {
+            "remaining": remaining,
+            "used": used,
+            "limit": limit,
+            "last_call": None,
+            "raw": data,
+        }
 
     # -- listings ---------------------------------------------------------
     def get_sports(self, include_all: bool = False) -> list:
