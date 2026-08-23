@@ -99,6 +99,7 @@ python -m odds_watcher probe
 python -m odds_watcher run                 # daemon: polls and alerts
 python -m odds_watcher run --dry-run       # detect and log, send nothing
 python -m odds_watcher once                # single poll (for cron)
+python -m odds_watcher usage               # spend, account balance, burn rate
 python -m odds_watcher status              # provider, budget, and any settings
                                            #   your .env is missing
 python -m odds_watcher bookmakers          # valid bookmaker identifiers

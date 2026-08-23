@@ -41,6 +41,7 @@ REQUIRED_CREDENTIALS = {
     "markets": ("ODDS_API_KEY",),
     "coverage": ("ODDS_API_KEY",),
     "props": ("ODDS_API_KEY",),
+    "usage": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -55,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "chat-id", "status"],
     )
     parser.add_argument(
         "--sport",
@@ -479,6 +480,44 @@ def _report_missing_settings(env_file: Path) -> None:
     print("  their defaults apply. Copy across any you want to change:")
     for key in missing:
         print(f"    {key}")
+
+
+def cmd_usage(config: Config) -> int:
+    """Local spend, the provider's own balance, and the resulting burn rate."""
+    store, budget, api, _ = _components(config)
+    now = now_ts()
+    unit = "credits" if config.odds_provider == "the-odds-api" else "requests"
+
+    last_hour = store.count_calls_since(now - 3600)
+    last_day = store.count_calls_since(now - 86400)
+    hour_left, day_left = budget.remaining()
+
+    print(f"provider:        {config.odds_provider}")
+    print(f"spent last hour: {last_hour} {unit}  (local cap {config.max_requests_per_hour}, "
+          f"{hour_left} left)")
+    print(f"spent last 24h:  {last_day} {unit}  (local cap {config.max_requests_per_day}, "
+          f"{day_left} left)")
+
+    quota = None
+    if hasattr(api, "fetch_quota"):
+        try:
+            quota = api.fetch_quota()
+        except (TransportError, BudgetExceeded) as exc:
+            print(f"\n! could not read the account balance: {exc}", file=sys.stderr)
+    store.close()
+
+    if quota and quota.get("remaining") is not None:
+        remaining = quota["remaining"]
+        print(f"\naccount credits: {remaining} remaining, {quota.get('used')} used")
+        if last_hour:
+            hours = remaining / last_hour
+            print(f"burn rate:       {last_hour}/hour -> about {hours:.1f} hour(s) of headroom")
+            if hours < 24:
+                print("!  at this rate the account runs dry within a day. Raise")
+                print("   POLL_INTERVAL_SECONDS, narrow SPORTS, or drop PROP_MARKETS.")
+        else:
+            print("burn rate:       nothing spent in the last hour")
+    return 0
 
 
 def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = False) -> int:
@@ -1006,6 +1045,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_props(config)
     if args.command == "chat-id":
         return cmd_chat_id(config)
+    if args.command == "usage":
+        return cmd_usage(config)
     if args.command == "status":
         return cmd_status(config, Path(args.env_file), args.reset_budget)
 

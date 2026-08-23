@@ -123,6 +123,19 @@ class TheOddsApiClient:
                 rows.append((str(item["key"]), f"{title}" + (f" ({group})" if group else "")))
         return sorted(set(rows))
 
+    def fetch_quota(self) -> dict:
+        """Current account usage, read without spending credits.
+
+        The /sports endpoint is free and still carries the quota headers, so
+        the balance can be checked as often as wanted.
+        """
+        self._call("sports", metered=False)
+        return {
+            "remaining": self.credits_remaining,
+            "used": self.credits_used,
+            "last_call": self.last_call_cost,
+        }
+
     def get_leagues(self, sport: str) -> list:
         """The Odds API has no separate league concept — sports keys are it."""
         raise UnsupportedByProvider(

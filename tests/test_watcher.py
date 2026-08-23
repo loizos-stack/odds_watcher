@@ -626,3 +626,49 @@ def test_events_are_tagged_with_the_sport_they_came_from(config, store):
     watcher.refresh_events(at(20))
 
     assert {e.sport_key for e in watcher._events} == {"baseball_mlb", "soccer_epl"}
+
+
+def test_usage_reports_burn_rate_against_the_account_balance(config, capsys, monkeypatch, tmp_path):
+    """"How fast am I spending" needs local spend and the provider's balance."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.store import RequestBudget, Store
+    from odds_watcher.util import now_ts
+
+    store = Store(tmp_path / "usage.db")
+    store.add_call(now_ts() - 60, cost=250)
+
+    class QuotaApi:
+        budget = None
+
+        def fetch_quota(self):
+            return {"remaining": 1000, "used": 19000, "last_call": 3}
+
+    cfg = dataclasses.replace(config, odds_provider="the-odds-api", max_requests_per_hour=500)
+    budget = RequestBudget(store, cfg.max_requests_per_hour, cfg.max_requests_per_day)
+    monkeypatch.setattr(cli, "_components", lambda c: (store, budget, QuotaApi(), None))
+
+    assert cli.cmd_usage(cfg) == 0
+    out = capsys.readouterr().out
+    assert "spent last hour: 250 credits" in out
+    assert "1000 remaining" in out
+    assert "250/hour -> about 4.0 hour(s) of headroom" in out
+    assert "runs dry within a day" in out
+
+
+def test_usage_without_a_metered_provider(config, capsys, monkeypatch, tmp_path):
+    from odds_watcher import cli
+    from odds_watcher.store import RequestBudget, Store
+
+    store = Store(tmp_path / "usage2.db")
+    budget = RequestBudget(store, config.max_requests_per_hour, config.max_requests_per_day)
+
+    class PlainApi:
+        budget = None
+
+    monkeypatch.setattr(cli, "_components", lambda c: (store, budget, PlainApi(), None))
+    assert cli.cmd_usage(config) == 0
+    out = capsys.readouterr().out
+    assert "spent last hour: 0 requests" in out
+    assert "account credits" not in out
