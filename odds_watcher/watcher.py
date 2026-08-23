@@ -148,10 +148,16 @@ class Watcher:
         for event in events:
             by_sport[event.sport_key].append(event.id)
 
+        sport_scoped = getattr(self.api, "sport_scoped_odds", False)
         batches: list[tuple[str, list]] = []
         for sport, ids in by_sport.items():
             if self.config.per_event_odds:
                 batches.extend((sport, [event_id]) for event_id in ids)
+            elif sport_scoped:
+                # One request already returns every fixture for the sport, and
+                # the ids only filter the reply. Splitting them into batches
+                # would buy the same payload once per batch.
+                batches.append((sport, list(ids)))
             else:
                 batches.extend((sport, list(chunk)) for chunk in chunked(ids, EVENTS_PER_ODDS_REQUEST))
 
@@ -244,8 +250,19 @@ class Watcher:
         sport. A wide SPORTS list costs nothing extra at poll time; it costs at
         refresh time, which is a separate, slower clock.
         """
-        in_range = {event.sport_key for event in self.events_in_tracking_range(now)}
-        return len(in_range) * (2 if self.config.prop_markets else 1)
+        events = self.events_in_tracking_range(now)
+        per_sport = 2 if self.config.prop_markets else 1
+        if self.config.per_event_odds:
+            return len(events) * per_sport
+        if getattr(self.api, "sport_scoped_odds", False):
+            return len({event.sport_key for event in events}) * per_sport
+        requests = 0
+        by_sport: dict[str, int] = defaultdict(int)
+        for event in events:
+            by_sport[event.sport_key] += 1
+        for count in by_sport.values():
+            requests += -(-count // EVENTS_PER_ODDS_REQUEST)
+        return requests * per_sport
 
     def estimate_refresh_cost(self, sports: int) -> int:
         """Requests one fixture-list refresh costs: every sport, every league."""
@@ -289,6 +306,11 @@ class Watcher:
                 "provider balance %d lasts about %.1f hour(s) at that rate",
                 remaining,
                 remaining / per_hour,
+            )
+        if cfg.per_event_odds and getattr(self.api, "sport_scoped_odds", False):
+            log.warning(
+                "PER_EVENT_ODDS=true costs one request per fixture on this provider, "
+                "but one request already returns the whole sport. Set it to false."
             )
         if per_hour > cfg.max_requests_per_hour:
             log.warning(

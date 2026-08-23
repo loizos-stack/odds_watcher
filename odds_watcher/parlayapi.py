@@ -341,6 +341,9 @@ class ParlayApiClient:
         self.default_sport = default_sport
         self.odds_format = odds_format
         self.supports_multi = True
+        # One /odds call returns every fixture for the sport; event ids only
+        # filter the reply, so the watcher must not split them into batches.
+        self.sport_scoped_odds = True
         self.credits_remaining: Optional[int] = None
         # Learned market keys survive a restart: rediscovering them costs a
         # rejected request per sport, every run.

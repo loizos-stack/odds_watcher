@@ -295,7 +295,8 @@ sports on ParlayAPI. The cost has two halves, and it matters which is which:
 * **Odds** are only requested for sports that have a fixture inside the
   tracking lead *at that moment* — one request each, however many sports are
   configured. Watching 89 sports when eight have a game starting soon costs
-  eight requests, not 89.
+  eight requests, not 89. On ParlayAPI one call returns every fixture for the
+  sport, so it stays one request no matter how many games are in range.
 
 So a wide `SPORTS` list is paid for at refresh time, and a short
 `POLL_INTERVAL_SECONDS` is paid for at poll time. Against ParlayAPI's

@@ -973,3 +973,36 @@ def test_no_alarm_when_the_scope_fits(config, store, caplog):
     with caplog.at_level(logging.WARNING):
         watcher.warn_if_unaffordable(KICKOFF - 300)
     assert "exceeds MAX_REQUESTS_PER_HOUR" not in caplog.text
+
+
+def test_a_sport_scoped_provider_is_asked_once_per_sport(config, store):
+    """ParlayAPI returns the whole sport per call; batching buys it twice."""
+    import dataclasses
+
+    class SportScoped(FakeApi):
+        sport_scoped_odds = True
+
+    events = [
+        dataclasses.replace(EVENT, id=f"e{i}", sport_key="soccer")
+        for i in range(45)  # more than two batches of EVENTS_PER_ODDS_REQUEST
+    ]
+    api = SportScoped(events, [])
+    watcher = Watcher(config, api, FakeTelegram(), store)
+    watcher.poll_once(KICKOFF - 300)
+
+    assert len(api.odds_calls) == 1
+    assert len(api.odds_calls[0]) == 45
+    assert watcher.estimate_poll_cost(KICKOFF - 300) == 1
+
+
+def test_a_per_event_provider_still_batches(config, store):
+    """Providers that honour event ids keep the 20-per-request batching."""
+    import dataclasses
+
+    events = [dataclasses.replace(EVENT, id=f"e{i}", sport_key="soccer") for i in range(45)]
+    api = FakeApi(events, [])
+    watcher = Watcher(config, api, FakeTelegram(), store)
+    watcher.poll_once(KICKOFF - 300)
+
+    assert len(api.odds_calls) == 3  # 20 + 20 + 5
+    assert watcher.estimate_poll_cost(KICKOFF - 300) == 3
