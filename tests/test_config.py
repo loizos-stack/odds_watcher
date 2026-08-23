@@ -211,3 +211,10 @@ def test_status_reports_the_installed_revision():
     revision = _installed_revision()
     assert revision
     assert "unknown" in revision or len(revision.split()) >= 3
+
+
+def test_prop_markets_all_is_recognised():
+    for value in ("all", "ALL", "*"):
+        assert Config.from_env({**BASE, "PROP_MARKETS": value}).wants_all_markets
+    assert not Config.from_env({**BASE, "PROP_MARKETS": "batter_hits"}).wants_all_markets
+    assert not Config.from_env(BASE).wants_all_markets

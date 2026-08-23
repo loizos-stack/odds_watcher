@@ -13,7 +13,7 @@ from .theoddsapi import TheOddsApiClient
 PROVIDERS = ("odds-api-io", "the-odds-api")
 
 
-def build_client(config: Config, budget=None):
+def build_client(config: Config, budget=None, market_cache=None):
     """Construct the client for ``ODDS_PROVIDER``."""
     if config.odds_provider == "the-odds-api":
         return TheOddsApiClient(
@@ -26,6 +26,8 @@ def build_client(config: Config, budget=None):
             prop_markets=config.prop_markets,
             odds_format="decimal",
             default_sport=config.sports[0] if config.sports else "",
+            market_cache=market_cache,
+            market_keys_ttl=config.market_keys_ttl_seconds,
         )
     return OddsApiClient(
         config.odds_api_key,

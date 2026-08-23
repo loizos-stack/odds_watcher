@@ -231,6 +231,34 @@ isolated by retrying the chunk one key at a time rather than losing the batch.
 "Accepted but empty" means the key is valid but unpriced for that fixture — try
 a bigger game before ruling it out.
 
+## Requesting everything
+
+```bash
+PROP_MARKETS=all
+```
+
+This asks for every market key catalogued for the sport. Because an
+unrecognised key fails the whole request, the usable set is discovered once —
+costing about one credit per candidate key — cached in the database, and
+re-probed when `MARKET_KEYS_TTL_SECONDS` (default 24h) expires. The watcher
+logs which set it is using on each start.
+
+**The cost is severe.** With ~25 usable MLB keys, each key costs a credit per
+fixture per poll:
+
+| Setup | Credits/month | |
+| --- | ---: | --- |
+| 60s poll, 5 games in window, 1 region | 1,382,400 | ~7x the $99 plan |
+| 120s poll, 5 games in window | 691,200 | ~4x |
+| 300s poll, 5 games in window | 276,480 | ~2x |
+| 300s poll, 2 games in window | 114,480 | fits Business |
+| 60s poll, 5 games, 2 regions | 2,764,800 | ~14x |
+
+That is 7,680 credits/hour at a 60s poll over five simultaneous games. The
+local `MAX_REQUESTS_PER_HOUR` / `_PER_DAY` caps are enforced in credits and
+will throttle the watcher before the account drains, so set them to match what
+you are willing to spend.
+
 ## Player props
 
 odds-api.io documents player props as being available one fixture at a time,

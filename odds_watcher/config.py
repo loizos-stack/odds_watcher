@@ -128,6 +128,8 @@ class Config:
     regions: tuple = ("us",)
     featured_markets: tuple = ("h2h", "spreads", "totals")
     prop_markets: tuple = ()
+    # How long a discovered market-key set stays usable before it is re-probed.
+    market_keys_ttl_seconds: int = 86400
     the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
 
     # --- plumbing --------------------------------------------------------
@@ -140,6 +142,11 @@ class Config:
     db_path: Path = field(default=Path("odds_watcher.db"))
     log_level: str = "INFO"
     dry_run: bool = False
+
+    @property
+    def wants_all_markets(self) -> bool:
+        """True when PROP_MARKETS asks for everything the sport offers."""
+        return any(entry.strip().lower() in ("all", "*") for entry in self.prop_markets)
 
     @property
     def alert_window_label(self) -> str:
@@ -226,6 +233,7 @@ class Config:
             # would silently ask for none and be billed as one credit anyway.
             featured_markets=_csv(env.get("FEATURED_MARKETS", "")) or ("h2h", "spreads", "totals"),
             prop_markets=_csv(env.get("PROP_MARKETS", "")),
+            market_keys_ttl_seconds=_get_int(env, "MARKET_KEYS_TTL_SECONDS", 86400, minimum=600),
             the_odds_api_base_url=env.get(
                 "THE_ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"
             ).rstrip("/"),

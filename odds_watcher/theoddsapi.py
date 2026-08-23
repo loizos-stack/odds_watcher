@@ -47,6 +47,8 @@ class TheOddsApiClient:
         prop_markets: Sequence[str] = (),
         odds_format: str = "decimal",
         default_sport: str = "",
+        market_cache=None,
+        market_keys_ttl: int = 86400,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -59,6 +61,10 @@ class TheOddsApiClient:
         # Odds calls are scoped by sport key here, unlike odds-api.io where an
         # event id is enough.
         self.default_sport = default_sport
+        # Store used to remember which market keys this account can request.
+        self.market_cache = market_cache
+        self.market_keys_ttl = market_keys_ttl
+        self._resolved_props: Optional[tuple] = None
         # Populated from response headers after the first metered call.
         self.credits_remaining: Optional[int] = None
         self.credits_used: Optional[int] = None
@@ -192,9 +198,13 @@ class TheOddsApiClient:
         wanted = set(event_ids)
         blocks = [b for b in self._featured_odds(sport, bookmakers) if b.get("id") in wanted]
         if self.prop_markets:
-            for event_id in list(event_ids)[:fallback_limit]:
+            ids = list(event_ids)[:fallback_limit]
+            markets = self.resolve_prop_markets(ids[0], bookmakers) if ids else ()
+            for event_id in ids:
+                if not markets:
+                    break
                 try:
-                    extra = self._event_odds(sport, event_id, self.prop_markets, bookmakers)
+                    extra = self._event_odds(sport, event_id, markets, bookmakers)
                 except HttpError as exc:
                     log.warning("prop markets unavailable for %s: %s", event_id, exc)
                     continue
@@ -202,6 +212,61 @@ class TheOddsApiClient:
                     blocks.append(extra)
         return blocks
 
+
+    @property
+    def wants_all_markets(self) -> bool:
+        return any(str(m).strip().lower() in ("all", "*") for m in self.prop_markets)
+
+    def resolve_prop_markets(self, event_id: str, bookmakers: Sequence[str] = ()) -> tuple:
+        """The prop keys to request, expanding "all" against the learned set.
+
+        Asking for every documented key on every poll would fail as soon as one
+        of them is not recognised, so the usable set is discovered once and
+        cached; it is re-probed when the cache expires.
+        """
+        if not self.wants_all_markets:
+            return tuple(self.prop_markets)
+        if self._resolved_props is not None:
+            return self._resolved_props
+
+        from .market_keys import candidates
+
+        sport = self.default_sport
+        if self.market_cache is not None:
+            cached, _checked = self.market_cache.get_market_keys(sport, self.market_keys_ttl)
+            if cached is not None:
+                self._resolved_props = tuple(cached)
+                log.info("using %d cached market key(s) for %s", len(cached), sport)
+                return self._resolved_props
+
+        keys = candidates(sport)
+        if not keys:
+            log.warning("no candidate market keys catalogued for %s", sport)
+            self._resolved_props = ()
+            return self._resolved_props
+
+        log.info(
+            "probing %d market key(s) for %s (about %d credits, once per %dh)",
+            len(keys),
+            sport,
+            len(keys) * max(len(self.regions), 1),
+            self.market_keys_ttl // 3600,
+        )
+        result = self.discover_markets(event_id, keys, bookmakers)
+        usable = sorted(set(result["available"]) | set(result["empty"]))
+        if self.market_cache is not None:
+            self.market_cache.save_market_keys(
+                sport,
+                {**{k: True for k in usable}, **{k: False for k in result["rejected"]}},
+            )
+        log.info(
+            "market keys for %s: %d usable, %d rejected",
+            sport,
+            len(usable),
+            len(result["rejected"]),
+        )
+        self._resolved_props = tuple(usable)
+        return self._resolved_props
 
     def discover_markets(self, event_id: str, candidates: Sequence[str],
                          bookmakers: Sequence[str] = (), chunk: int = 8) -> dict:
@@ -250,7 +315,7 @@ class TheOddsApiClient:
         return parse_quotes(self.get_event_odds_raw(event_id, bookmakers), default_event_id=event_id)
 
     def get_event_odds_raw(self, event_id: str, bookmakers: Sequence[str]) -> Any:
-        markets = tuple(self.featured_markets) + tuple(self.prop_markets)
+        markets = tuple(self.featured_markets) + self.resolve_prop_markets(event_id, bookmakers)
         return self._event_odds(self.default_sport, event_id, markets, bookmakers)
 
     def get_multi_odds_raw(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> Any:

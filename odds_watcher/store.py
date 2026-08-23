@@ -41,6 +41,14 @@ CREATE TABLE IF NOT EXISTS api_calls (
     cost INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls (ts);
+
+CREATE TABLE IF NOT EXISTS market_keys (
+    sport      TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    ok         INTEGER NOT NULL,
+    checked_at REAL NOT NULL,
+    PRIMARY KEY (sport, key)
+);
 CREATE INDEX IF NOT EXISTS idx_line_state_start ON line_state (event_start);
 """
 
@@ -196,6 +204,35 @@ class Store:
 
     def tracked_lines(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM line_state").fetchone()[0]
+
+    # -- learned market keys ----------------------------------------------
+    def get_market_keys(self, sport: str, max_age: float, now: Optional[float] = None):
+        """Cached ``(usable keys, checked_at)`` for a sport, or ``(None, None)``.
+
+        Providers that require markets to be named by request will reject the
+        whole call for one bad key, so the working set is learned once and
+        reused rather than rediscovered every poll.
+        """
+        now = now_ts() if now is None else now
+        rows = self.conn.execute(
+            "SELECT key, ok, checked_at FROM market_keys WHERE sport = ?", (sport,)
+        ).fetchall()
+        if not rows:
+            return None, None
+        checked_at = max(row["checked_at"] for row in rows)
+        if now - checked_at > max_age:
+            return None, checked_at
+        return [row["key"] for row in rows if row["ok"]], checked_at
+
+    def save_market_keys(self, sport: str, keys: dict, now: Optional[float] = None) -> None:
+        """Persist ``{key: usable}`` for a sport."""
+        now = now_ts() if now is None else now
+        self.conn.executemany(
+            """INSERT INTO market_keys (sport, key, ok, checked_at) VALUES (?,?,?,?)
+               ON CONFLICT(sport, key) DO UPDATE SET ok=excluded.ok, checked_at=excluded.checked_at""",
+            [(sport, key, int(bool(ok)), now) for key, ok in keys.items()],
+        )
+        self.conn.commit()
 
     # -- request budget ---------------------------------------------------
     def count_calls_since(self, since_ts: float) -> int:

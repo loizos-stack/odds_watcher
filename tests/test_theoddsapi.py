@@ -315,3 +315,78 @@ def test_candidate_catalogue_covers_mlb():
     assert "pitcher_strikeouts" in keys
     assert "totals_1st_5_innings" in keys
     assert candidates("underwater_hockey") == ()
+
+
+class _Cache:
+    """Stands in for the store's market-key cache."""
+
+    def __init__(self, keys=None, checked_at=None):
+        self.keys = keys
+        self.checked_at = checked_at
+        self.saved = None
+
+    def get_market_keys(self, sport, max_age, now=None):
+        return self.keys, self.checked_at
+
+    def save_market_keys(self, sport, keys, now=None):
+        self.saved = keys
+
+
+def test_all_expands_to_the_usable_keys_and_caches_them(monkeypatch):
+    from odds_watcher.http import HttpError
+
+    bogus = {"batter_triples"}
+
+    def fake(url, **kw):
+        asked = url.split("markets=")[1].split("&")[0].split("%2C")
+        if bogus & set(asked):
+            raise HttpError(422, "INVALID_MARKET", url)
+        return _prop_block([a for a in asked if a == "batter_home_runs"]), {}
+
+    monkeypatch.setattr("odds_watcher.theoddsapi.request_json_with_headers", fake)
+    monkeypatch.setattr(
+        "odds_watcher.market_keys.candidates",
+        lambda sport: ("batter_home_runs", "batter_hits", "batter_triples"),
+    )
+    cache = _Cache()
+    client = TheOddsApiClient("k", default_sport="baseball_mlb", prop_markets=("all",),
+                              market_cache=cache)
+
+    resolved = client.resolve_prop_markets("m0")
+    assert set(resolved) == {"batter_home_runs", "batter_hits"}  # rejected key excluded
+    assert cache.saved == {"batter_home_runs": True, "batter_hits": True, "batter_triples": False}
+
+
+def test_cached_keys_are_reused_without_probing(monkeypatch):
+    def explode(url, **kw):
+        raise AssertionError("should not call the API when the cache is warm")
+
+    monkeypatch.setattr("odds_watcher.theoddsapi.request_json_with_headers", explode)
+    cache = _Cache(keys=["batter_home_runs", "pitcher_strikeouts"], checked_at=1.0)
+    client = TheOddsApiClient("k", default_sport="baseball_mlb", prop_markets=("all",),
+                              market_cache=cache)
+    assert client.resolve_prop_markets("m0") == ("batter_home_runs", "pitcher_strikeouts")
+
+
+def test_explicit_keys_bypass_discovery(monkeypatch):
+    def explode(url, **kw):
+        raise AssertionError("explicit keys need no probing")
+
+    monkeypatch.setattr("odds_watcher.theoddsapi.request_json_with_headers", explode)
+    client = TheOddsApiClient("k", default_sport="baseball_mlb",
+                              prop_markets=("batter_hits",), market_cache=_Cache())
+    assert client.resolve_prop_markets("m0") == ("batter_hits",)
+
+
+def test_resolution_happens_once_per_client(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "odds_watcher.theoddsapi.request_json_with_headers",
+        lambda url, **kw: (calls.append(url), (_prop_block(["batter_home_runs"]), {}))[1],
+    )
+    monkeypatch.setattr("odds_watcher.market_keys.candidates", lambda sport: ("batter_home_runs",))
+    client = TheOddsApiClient("k", default_sport="baseball_mlb", prop_markets=("all",),
+                              market_cache=_Cache())
+    client.resolve_prop_markets("m0")
+    client.resolve_prop_markets("m0")
+    assert len(calls) == 1

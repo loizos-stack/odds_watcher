@@ -122,7 +122,7 @@ def setup_logging(level: str) -> None:
 def _components(config: Config):
     store = Store(config.db_path)
     budget = RequestBudget(store, config.max_requests_per_hour, config.max_requests_per_day)
-    api = build_client(config, budget=budget)
+    api = build_client(config, budget=budget, market_cache=store)
     telegram = TelegramClient(
         config.telegram_bot_token,
         config.telegram_chat_id,

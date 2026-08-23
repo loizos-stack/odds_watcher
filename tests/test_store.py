@@ -153,3 +153,24 @@ def test_old_databases_gain_the_cost_column(tmp_path):
     store.add_call(3.0, cost=5)
     assert store.count_calls_since(0) == 7
     store.close()
+
+
+def test_market_keys_expire(store):
+    store.save_market_keys("baseball_mlb", {"batter_hits": True, "batter_triples": False}, now=1000)
+
+    fresh, checked = store.get_market_keys("baseball_mlb", max_age=3600, now=2000)
+    assert fresh == ["batter_hits"]  # rejected keys are never handed back
+    assert checked == 1000
+
+    stale, checked = store.get_market_keys("baseball_mlb", max_age=100, now=2000)
+    assert stale is None  # expired, so the caller re-probes
+    assert checked == 1000
+
+    assert store.get_market_keys("basketball_nba", max_age=3600, now=2000) == (None, None)
+
+
+def test_market_keys_update_in_place(store):
+    store.save_market_keys("baseball_mlb", {"batter_hits": False}, now=1000)
+    assert store.get_market_keys("baseball_mlb", max_age=3600, now=1001)[0] == []
+    store.save_market_keys("baseball_mlb", {"batter_hits": True}, now=1002)
+    assert store.get_market_keys("baseball_mlb", max_age=3600, now=1003)[0] == ["batter_hits"]
