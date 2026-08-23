@@ -222,7 +222,9 @@ class Config:
             per_event_odds=_get_bool(env, "PER_EVENT_ODDS"),
             odds_provider=provider,
             regions=_csv(env.get("REGIONS", "us")) or ("us",),
-            featured_markets=_csv(env.get("FEATURED_MARKETS", "h2h,spreads,totals")),
+            # The odds endpoint requires at least one market; an empty setting
+            # would silently ask for none and be billed as one credit anyway.
+            featured_markets=_csv(env.get("FEATURED_MARKETS", "")) or ("h2h", "spreads", "totals"),
             prop_markets=_csv(env.get("PROP_MARKETS", "")),
             the_odds_api_base_url=env.get(
                 "THE_ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"

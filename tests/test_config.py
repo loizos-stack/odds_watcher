@@ -193,3 +193,12 @@ def test_no_complaint_when_the_env_is_current(tmp_path, capsys):
     (tmp_path / ".env").write_text("ODDS_PROVIDER=the-odds-api\n")
     _report_missing_settings(tmp_path / ".env")
     assert capsys.readouterr().out == ""
+
+
+def test_blank_featured_markets_falls_back_to_the_defaults():
+    """An empty setting must not ask the odds endpoint for no markets."""
+    config = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api", "FEATURED_MARKETS": ""})
+    assert config.featured_markets == ("h2h", "spreads", "totals")
+
+    explicit = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api", "FEATURED_MARKETS": "h2h"})
+    assert explicit.featured_markets == ("h2h",)

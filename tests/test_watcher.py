@@ -540,3 +540,23 @@ def test_watcher_runs_unchanged_against_the_odds_api(config, store):
     assert alerts[0].reference_odds == 1.65
     assert round(alerts[0].drop_pct, 1) == 12.1
     assert "DRAFTKINGS" in telegram.sent[0]
+
+
+def test_exhausted_local_budget_is_a_message_not_a_traceback(config, capsys, monkeypatch):
+    """The watcher's own cap firing must not look like a crash."""
+    from odds_watcher import cli
+    from odds_watcher.odds_api import BudgetExceeded
+
+    class SpentApi:
+        budget = None
+
+        def get_bookmakers(self):
+            raise BudgetExceeded("local budget cannot cover 3 credit(s) for sports/x/odds")
+
+    monkeypatch.setattr(cli, "_components", lambda cfg: (_FakeStore(), None, SpentApi(), None))
+    assert cli.cmd_bookmakers(config) == 1
+
+    err = capsys.readouterr().err
+    assert "local budget cannot cover" in err
+    assert "watcher's own cap, not the provider's" in err
+    assert "--reset-budget" in err

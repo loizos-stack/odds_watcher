@@ -19,6 +19,7 @@ from typing import Optional
 from .config import ALL_CREDENTIALS, Config, ConfigError, load_dotenv
 from .detector import Alert
 from .http import TransportError
+from .odds_api import BudgetExceeded
 from .providers import build_client
 from .theoddsapi import UnsupportedByProvider
 from .store import RequestBudget, Store
@@ -67,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--env-file", default=".env", help="path to the .env file (default: .env)")
     parser.add_argument("--log-level", default=None, help="override LOG_LEVEL")
+    parser.add_argument(
+        "--reset-budget",
+        action="store_true",
+        help="clear the watcher's local request/credit tally (status)",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -127,9 +133,10 @@ def cmd_check(config: Config) -> int:
             f"Alerting on drops ≥ {config.min_drop_pct:.1f}% {config.alert_window_label}."
         )
         print(f"✓ Test message sent to chat {config.telegram_chat_id}")
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         ok = False
         print(f"✗ Telegram: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
 
     try:
         selected = api.get_selected_bookmakers()
@@ -140,9 +147,10 @@ def cmd_check(config: Config) -> int:
                 f"! {', '.join(missing)} not selected on the account — "
                 "run `python -m odds_watcher select-bookmakers`"
             )
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         ok = False
         print(f"✗ odds-api.io: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
 
     try:
         now = now_ts()
@@ -159,9 +167,10 @@ def cmd_check(config: Config) -> int:
         if not upcoming:
             print("! nothing upcoming — check the SPORTS/LEAGUES slugs", file=sys.stderr)
         _report_budget_fit(config, upcoming, now)
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         ok = False
         print(f"✗ events endpoint: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         _sport_error(api, config, exc)
 
     hour, day = budget.remaining()
@@ -179,8 +188,9 @@ def cmd_bookmakers(config: Config, search: Optional[str] = None) -> int:
     store, _, api, _ = _components(config)
     try:
         rows = api.get_bookmakers()
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not list bookmakers: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         return 1
     finally:
         store.close()
@@ -217,8 +227,9 @@ def cmd_sports(config: Config, search: Optional[str] = None) -> int:
     store, _, api, _ = _components(config)
     try:
         rows = api.get_sports()
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not list sports: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         return 1
     finally:
         store.close()
@@ -235,8 +246,9 @@ def cmd_leagues(config: Config, search: Optional[str] = None) -> int:
     except UnsupportedByProvider as exc:
         print(f"! {exc}", file=sys.stderr)
         return 1
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not list leagues: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         _sport_error(api, config, exc)
         return 1
     finally:
@@ -276,6 +288,25 @@ def _suggest_sports(api, wanted: tuple) -> None:
             print(f"  did you mean, for {name!r}: {', '.join(matches[:8])}")
         else:
             print(f"  no sport resembling {name!r}; run `py -m odds_watcher sports` for the full list")
+
+
+def _budget_hint(config: Config, exc) -> None:
+    """Explain an exhausted local allowance and how to move past it."""
+    if not isinstance(exc, BudgetExceeded):
+        return
+    unit = "credits" if config.odds_provider == "the-odds-api" else "requests"
+    print(
+        f"\nThis is the watcher's own cap, not the provider's: it allows "
+        f"{config.max_requests_per_hour} {unit}/hour and "
+        f"{config.max_requests_per_day}/day.",
+        file=sys.stderr,
+    )
+    print(
+        "  Raise MAX_REQUESTS_PER_HOUR / MAX_REQUESTS_PER_DAY in .env, wait for the\n"
+        "  rolling 24h window to free up, or clear the local tally with:\n"
+        "    py -m odds_watcher status --reset-budget",
+        file=sys.stderr,
+    )
 
 
 def _sport_error(api, config: Config, exc) -> None:
@@ -345,8 +376,9 @@ def cmd_select_bookmakers(config: Config) -> int:
     except UnsupportedByProvider as exc:
         print(f"! {exc}")
         return 0
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not select bookmakers: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         print("\nThe identifiers in BOOKMAKERS are not the ones this API uses.")
         _suggest_bookmakers(api, config.bookmakers)
         print("\nFull list: py -m odds_watcher bookmakers --search bet")
@@ -359,8 +391,9 @@ def cmd_chat_id(config: Config) -> int:
     _, _, _, telegram = _components(config)
     try:
         updates = telegram.get_updates()
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not reach Telegram: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         return 1
     if not updates:
         print(
@@ -410,8 +443,12 @@ def _report_missing_settings(env_file: Path) -> None:
         print(f"    {key}")
 
 
-def cmd_status(config: Config, env_file: Optional[Path] = None) -> int:
+def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = False) -> int:
     store, budget, _, _ = _components(config)
+    if reset:
+        store.conn.execute("DELETE FROM api_calls")
+        store.conn.commit()
+        print("local budget tally cleared (the provider's own usage is unaffected)\n")
     hour, day = budget.remaining()
     unit = "credits" if config.odds_provider == "the-odds-api" else "requests"
     print(f"provider:       {config.odds_provider}")
@@ -450,8 +487,9 @@ def cmd_markets(config: Config, search: Optional[str] = None) -> int:
             entry = catalogue.setdefault(name, {})
             for book, count in books.items():
                 entry[book] = entry.get(book, 0) + count
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ could not list markets: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         _sport_error(api, config, exc)
         return 1
     finally:
@@ -553,8 +591,9 @@ def cmd_props(config: Config) -> int:
             print(f"no fixture in the sample had batched prices; inspecting {target.name}\n")
 
         single = _catalogue_fn([api.get_event_odds_raw(target.id, config.bookmakers)])
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ props check failed: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         _sport_error(api, config, exc)
         return 1
     finally:
@@ -665,8 +704,9 @@ def cmd_probe(config: Config) -> int:
             return 1
         by_id = {event.id: event for event in events}
         blocks = api.get_odds_payloads([e.id for e in events], config.bookmakers)
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ probe failed: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         _sport_error(api, config, exc)
         return 1
     finally:
@@ -742,8 +782,9 @@ def cmd_coverage(config: Config) -> int:
         blocks = []
         for batch in chunked([e.id for e in events], EVENTS_PER_ODDS_REQUEST):
             blocks.extend(api.get_odds_payloads(batch, config.bookmakers))
-    except TransportError as exc:
+    except (TransportError, BudgetExceeded) as exc:
         print(f"✗ coverage check failed: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
         _sport_error(api, config, exc)
         return 1
     finally:
@@ -857,7 +898,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "status":
-        return cmd_status(config, Path(args.env_file))
+        return cmd_status(config, Path(args.env_file), args.reset_budget)
 
     store, _, api, telegram = _components(config)
     watcher = Watcher(config, api, telegram, store)
