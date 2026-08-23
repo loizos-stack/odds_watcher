@@ -52,6 +52,13 @@ def _first(mapping: dict, *names: str, default: Any = None) -> Any:
     return default
 
 
+def _int(value: Any, default=None):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _text(value: Any) -> str:
     if isinstance(value, dict):
         return str(_first(value, "name", "title", "slug", "key", default="")).strip()
@@ -167,6 +174,51 @@ def _iter_selections(market: Any, odds_format: str = "american"):
             yield name, price, ("" if line in (None, "") else str(line)), item
 
 
+def _flat_prop_quotes(row: dict, default_event_id: Optional[str], odds_format: str) -> list:
+    """Quotes from a flat prop row.
+
+    The props endpoint returns one row per player/line/book rather than nested
+    markets: ``{"player_name": ..., "line": 0.5, "over_price": -110,
+    "under_price": -120, "bookmaker": "draftkings"}``.
+    """
+    event_id = str(
+        _first(row, "event_id", "eventId", "game_id", "id", default=default_event_id) or ""
+    )
+    book = _text(_first(row, "bookmaker", "book", "sportsbook")).lower()
+    player = _text(_first(row, "player_name", "player", "participant", "description"))
+    market = _text(_first(row, "market", "market_key", "marketKey", "key", "prop_type"))
+    if not (event_id and book and market):
+        return []
+    line_raw = _first(row, "line", "point", "handicap", "total", default="")
+    line = "" if line_raw in (None, "") else str(line_raw)
+
+    quotes = []
+    for field, side in (("over_price", "Over"), ("under_price", "Under"), ("price", "")):
+        if field not in row:
+            continue
+        price = _price(row[field], odds_format)
+        if price is None:
+            continue
+        name = _text(_first(row, "name", "outcome", "selection", default="")) if not side else side
+        outcome = " ".join(part for part in (player, name) if part) or name or player
+        if not outcome:
+            continue
+        quotes.append(
+            Quote(
+                event_id=event_id,
+                bookmaker=book,
+                market=market,
+                line=line,
+                outcome=outcome,
+                odds=price,
+                updated_ts=parse_timestamp(
+                    _first(row, "updated_at", "last_update", "timestamp", default=None)
+                ),
+            )
+        )
+    return quotes
+
+
 def parse_quotes(
     payload: Any, *, default_event_id: Optional[str] = None, odds_format: str = "american"
 ) -> list:
@@ -174,6 +226,15 @@ def parse_quotes(
     seen: set = set()
     for block in _as_list(payload):
         if not isinstance(block, dict):
+            continue
+        # A flat prop row carries its prices directly rather than nested books.
+        if any(key in block for key in ("over_price", "under_price")) or (
+            "player_name" in block and "bookmaker" in block
+        ):
+            for quote in _flat_prop_quotes(block, default_event_id, odds_format):
+                if quote.key not in seen:
+                    seen.add(quote.key)
+                    quotes.append(quote)
             continue
         event_id = str(
             _first(block, "id", "event_id", "eventId", "game_id", default=default_event_id) or ""
@@ -235,6 +296,9 @@ class ParlayApiClient:
         prop_markets: Sequence[str] = (),
         default_sport: str = "",
         odds_format: str = "american",
+        regions: Sequence[str] = (),
+        featured_markets: Sequence[str] = ("h2h", "spreads", "totals"),
+        bookmakers: Sequence[str] = (),
         **_ignored,
     ):
         self.api_key = api_key
@@ -242,6 +306,9 @@ class ParlayApiClient:
         self.timeout = timeout
         self.budget = budget
         self.prop_markets = tuple(prop_markets)
+        self.regions = tuple(regions)
+        self.featured_markets = tuple(featured_markets)
+        self.bookmakers = tuple(bookmakers)
         self.default_sport = default_sport
         self.odds_format = odds_format
         self.supports_multi = True
@@ -294,14 +361,33 @@ class ParlayApiClient:
                         pass
 
     def fetch_quota(self) -> dict:
-        """The provider's own remaining allowance, from response headers.
+        """The account's remaining allowance from the dedicated usage endpoint.
 
         Deliberately bypasses the local cap: being unable to find out how much
-        is left because the local cap is spent is exactly backwards. It does
-        cost one real request, so callers make it opt-in.
+        is left because the local cap is spent is exactly backwards.
         """
-        self._call("v1/sports", metered=False)
-        return {"remaining": self.credits_remaining, "used": None, "last_call": None}
+        data = self._call("v1/usage", metered=False)
+        remaining = self.credits_remaining
+        used = None
+        limit = None
+        if isinstance(data, dict):
+            body = data.get("usage") if isinstance(data.get("usage"), dict) else data
+            for field in ("remaining", "requests_remaining", "remaining_requests"):
+                if field in body:
+                    remaining = _int(body[field], remaining)
+                    break
+            for field in ("used", "requests_used", "count"):
+                if field in body:
+                    used = _int(body[field], used)
+                    break
+            for field in ("limit", "quota", "monthly_limit", "requests_limit"):
+                if field in body:
+                    limit = _int(body[field], limit)
+                    break
+        if remaining is None and limit is not None and used is not None:
+            remaining = limit - used
+        self.credits_remaining = remaining
+        return {"remaining": remaining, "used": used, "limit": limit, "last_call": None}
 
     # -- listings ---------------------------------------------------------
     def get_sports(self, include_all: bool = False) -> list:
@@ -359,10 +445,44 @@ class ParlayApiClient:
         return [event for event in events if event is not None]
 
     def _sport_odds(self, sport: str) -> Any:
-        return self._call(f"v1/sports/{sport}/odds")
+        """Game markets. Without an explicit `markets` the API returns h2h only."""
+        params = {
+            "markets": ",".join(self.featured_markets),
+            "oddsFormat": self.odds_format,
+        }
+        if self.regions:
+            params["regions"] = ",".join(self.regions)
+        if self.bookmakers:
+            params["bookmakers"] = ",".join(self.bookmakers)
+        return self._call(f"v1/sports/{sport}/odds", params)
 
     def _sport_props(self, sport: str) -> Any:
-        return self._call(f"v1/sports/{sport}/props")
+        """Player props, which arrive as flat rows rather than nested markets."""
+        params = {"oddsFormat": self.odds_format}
+        explicit = [m for m in self.prop_markets if m.strip().lower() not in ("all", "*")]
+        if explicit:
+            params["markets"] = ",".join(explicit)
+        if self.bookmakers:
+            params["bookmakers"] = ",".join(self.bookmakers)
+        return self._call(f"v1/sports/{sport}/props", params)
+
+    def prop_market_keys(self, sport: str) -> list:
+        """The prop market keys this sport offers, from the reference endpoint."""
+        payload = self._call(f"v1/sports/{sport}/props/markets")
+        if isinstance(payload, dict):
+            for key in ("markets", "data", "results", "items"):
+                if isinstance(payload.get(key), list):
+                    payload = payload[key]
+                    break
+        rows = []
+        for item in _as_list(payload):
+            if isinstance(item, str):
+                rows.append((item, item))
+            elif isinstance(item, dict):
+                key = _first(item, "key", "market", "market_key", "slug", "name", default=None)
+                if key:
+                    rows.append((str(key), _text(_first(item, "title", "name", default=key))))
+        return sorted(set(rows))
 
     def get_odds_payloads(self, event_ids: Sequence[str], bookmakers: Sequence[str],
                           *, sport: str = "", fallback_limit: int = 5) -> list:

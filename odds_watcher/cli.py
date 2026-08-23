@@ -580,6 +580,29 @@ def cmd_discover_markets(config: Config) -> int:
 
     store, _, api, _ = _components(config)
     sport = config.sports[0] if config.sports else ""
+
+    # Some providers publish the prop keys directly, which beats probing.
+    if hasattr(api, "prop_market_keys"):
+        try:
+            rows = api.prop_market_keys(sport)
+        except (TransportError, BudgetExceeded) as exc:
+            print(f"✗ could not list prop markets: {exc}", file=sys.stderr)
+            _budget_hint(config, exc)
+            store.close()
+            return 1
+        finally:
+            pass
+        store.close()
+        if not rows:
+            print(f"no prop markets listed for {sport!r}", file=sys.stderr)
+            return 1
+        width = max(len(key) for key, _ in rows)
+        print(f"prop markets available for {sport} ({len(rows)}):\n")
+        for key, title in rows:
+            print(f"    {key.ljust(width)}  {title}")
+        print("\nAdd to .env (or PROP_MARKETS=all for every one of them):\n")
+        print("PROP_MARKETS=" + ",".join(key for key, _ in rows[:12]))
+        return 0
     keys = candidates(sport)
     if not keys:
         print(

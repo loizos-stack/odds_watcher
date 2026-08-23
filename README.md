@@ -331,6 +331,34 @@ local `MAX_REQUESTS_PER_HOUR` / `_PER_DAY` caps are enforced in credits and
 will throttle the watcher before the account drains, so set them to match what
 you are willing to spend.
 
+## Enabling totals and props on ParlayAPI
+
+`FEATURED_MARKETS` is sent as the `markets` query parameter. Without it the API
+answers with `h2h` alone, so spreads and totals need it set explicitly:
+
+```bash
+FEATURED_MARKETS=h2h,spreads,totals
+```
+
+Props come from a separate `/v1/sports/{sport}/props` endpoint, enabled by
+setting `PROP_MARKETS`, and cost one extra request per sport per poll:
+
+```bash
+PROP_MARKETS=all                      # every prop market the sport offers
+PROP_MARKETS=player_strikeouts,player_total_bases   # or a chosen few
+```
+
+List what a sport offers — this provider publishes the keys, so no probing is
+needed:
+
+```bash
+python -m odds_watcher markets --discover
+```
+
+Props arrive as flat rows (`player_name`, `line`, `over_price`, `under_price`)
+rather than nested markets, and are converted into one tracked line per player,
+side and book.
+
 ## Player props
 
 odds-api.io documents player props as being available one fixture at a time,

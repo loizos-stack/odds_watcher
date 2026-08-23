@@ -192,8 +192,10 @@ def test_endpoint_paths(monkeypatch):
     client.get_odds_payloads(["e1"], [], sport="baseball_mlb")
 
     assert calls[0].endswith("/v1/sports")
-    assert calls[1].endswith("/v1/sports/baseball_mlb/odds")
-    assert calls[2].endswith("/v1/sports/baseball_mlb/props")
+    assert "/v1/sports/baseball_mlb/odds?" in calls[1]
+    # Without an explicit markets list the API returns h2h only.
+    assert "markets=h2h%2Cspreads%2Ctotals" in calls[1]
+    assert "/v1/sports/baseball_mlb/props?" in calls[2]
 
 
 def test_sports_listing_unwraps_its_envelope(monkeypatch):
@@ -243,3 +245,64 @@ def test_allowance_stays_unknown_when_nothing_reports_it(monkeypatch):
                         lambda url, **kw: ({"events": []}, {}))
     client = ParlayApiClient("k")
     assert client.fetch_quota()["remaining"] is None
+
+
+def test_flat_prop_rows_are_parsed():
+    """The props endpoint returns rows, not nested bookmakers/markets/outcomes."""
+    quotes = parse_quotes({"props": [
+        {"event_id": "e1", "bookmaker": "draftkings", "player_name": "Aaron Judge",
+         "market": "player_home_runs", "line": 0.5,
+         "over_price": 260, "under_price": -340},
+        {"event_id": "e1", "bookmaker": "pinnacle", "player_name": "Zack Wheeler",
+         "market": "player_strikeouts", "line": 6.5,
+         "over_price": -115, "under_price": -105},
+    ]})
+    by_key = {(q.bookmaker, q.market, q.outcome): q for q in quotes}
+
+    judge_over = by_key[("draftkings", "player_home_runs", "Aaron Judge Over")]
+    assert judge_over.odds == pytest.approx(3.60, abs=1e-2)   # +260
+    assert judge_over.line == "0.5"
+
+    judge_under = by_key[("draftkings", "player_home_runs", "Aaron Judge Under")]
+    assert judge_under.odds == pytest.approx(1.294, abs=1e-3)  # -340
+
+    assert ("pinnacle", "player_strikeouts", "Zack Wheeler Over") in by_key
+
+
+def test_flat_and_nested_payloads_both_parse():
+    """A poll mixes an /odds response with a /props one."""
+    nested = {"id": "e1", "bookmakers": [{"key": "bet365", "markets": [
+        {"key": "h2h", "outcomes": [{"name": "A", "price": -130}]}]}]}
+    flat = {"event_id": "e1", "bookmaker": "bet365", "player_name": "A Player",
+            "market": "player_hits", "line": 1.5, "over_price": -120}
+
+    quotes = parse_quotes([nested, flat])
+    assert {q.market for q in quotes} == {"h2h", "player_hits"}
+
+
+def test_flat_rows_without_the_essentials_are_skipped():
+    assert parse_quotes([{"over_price": -110}]) == []                       # no event/book
+    assert parse_quotes([{"event_id": "e", "bookmaker": "b", "over_price": -110}]) == []  # no market
+
+
+def test_usage_endpoint_is_read(monkeypatch):
+    monkeypatch.setattr(
+        "odds_watcher.parlayapi.request_json_with_headers",
+        lambda url, **kw: ({"usage": {"used": 480, "limit": 1000}}, {}),
+    )
+    quota = ParlayApiClient("k").fetch_quota()
+    assert quota["used"] == 480
+    assert quota["limit"] == 1000
+    assert quota["remaining"] == 520
+
+
+def test_prop_market_reference_endpoint(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "odds_watcher.parlayapi.request_json_with_headers",
+        lambda url, **kw: (calls.append(url),
+                           ({"markets": [{"key": "player_home_runs", "title": "Home Runs"}]}, {}))[1],
+    )
+    rows = ParlayApiClient("k").prop_market_keys("baseball_mlb")
+    assert rows == [("player_home_runs", "Home Runs")]
+    assert calls[0].endswith("/v1/sports/baseball_mlb/props/markets")
