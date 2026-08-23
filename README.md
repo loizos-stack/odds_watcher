@@ -17,6 +17,21 @@ Odds: 2.00 → 1.80 (-10.0%)
 
 ## How it decides to alert
 
+`BASELINE_MODE` picks between two rules:
+
+| | `window-entry` (default) | `first-seen` |
+| --- | --- | --- |
+| Reference price | last price before the window opens | first price recorded for the line |
+| When a signal can fire | only inside the alert window | any time from the start of tracking to kick-off |
+| Tracked period set by | `WINDOW_START_SECONDS` | `BASELINE_LEAD_SECONDS` |
+| A drop finishing before the window | ignored | signalled |
+
+In both modes the reference resets to the signalled price after each alert, so
+a line sliding 2.00 → 1.89 → 1.79 → 1.69 produces three separate signals rather
+than one, and a slow drift produces none.
+
+### window-entry, in detail
+
 "Line drops 0–10 minutes before game time" is implemented as:
 
 1. From **15 minutes** before kick-off (`BASELINE_LEAD_SECONDS`) the bot records

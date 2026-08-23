@@ -237,3 +237,19 @@ def test_explicit_lead_that_is_too_short_names_the_way_out():
     assert "BASELINE_LEAD_SECONDS=1500" in message
     assert "POLL_INTERVAL_SECONDS to 150" in message
     assert "Removing BASELINE_LEAD_SECONDS" in message
+
+
+def test_baseline_mode_validation():
+    assert Config.from_env(BASE).baseline_mode == "window-entry"
+    assert Config.from_env({**BASE, "BASELINE_MODE": "first-seen"}).baseline_mode == "first-seen"
+    with pytest.raises(ConfigError):
+        Config.from_env({**BASE, "BASELINE_MODE": "opening"})
+
+
+def test_alert_label_describes_the_active_rule():
+    default = Config.from_env(BASE)
+    assert default.alert_window_label == "0-10 min before kick-off"
+
+    first_seen = Config.from_env({**BASE, "BASELINE_MODE": "first-seen",
+                                  "BASELINE_LEAD_SECONDS": "1200"})
+    assert "0-20 min before kick-off (from first price seen)" == first_seen.alert_window_label

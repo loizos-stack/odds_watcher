@@ -104,6 +104,12 @@ class Config:
     # budget on prices that are thrown away.
     baseline_lead_seconds: int = 900
     min_drop_pct: float = 5.0
+    # How the reference price is chosen:
+    #   "window-entry" - the last price before the alert window opens; only
+    #                    movement inside the window can alert.
+    #   "first-seen"   - the first price recorded for the line; any drop from
+    #                    the start of tracking until kick-off can alert.
+    baseline_mode: str = "window-entry"
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
     # Ceiling on messages from one poll. With every market and player prop
@@ -150,6 +156,11 @@ class Config:
 
     @property
     def alert_window_label(self) -> str:
+        if self.baseline_mode == "first-seen":
+            return (
+                f"{self.window_end_seconds // 60}-{self.baseline_lead_seconds // 60} "
+                "min before kick-off (from first price seen)"
+            )
         return f"{self.window_end_seconds // 60}-{self.window_start_seconds // 60} min before kick-off"
 
     @classmethod
@@ -179,6 +190,13 @@ class Config:
         if provider not in ("odds-api-io", "the-odds-api"):
             raise ConfigError(
                 f"ODDS_PROVIDER must be 'odds-api-io' or 'the-odds-api', got {provider!r}"
+            )
+
+        baseline_mode = env.get("BASELINE_MODE", "window-entry").strip().lower()
+        if baseline_mode not in ("window-entry", "first-seen"):
+            raise ConfigError(
+                "BASELINE_MODE must be 'window-entry' or 'first-seen', got "
+                f"{baseline_mode!r}"
             )
 
         bookmakers = _csv(env.get("BOOKMAKERS", ",".join(DEFAULT_BOOKMAKERS)))
@@ -226,6 +244,7 @@ class Config:
             window_end_seconds=window_end,
             baseline_lead_seconds=baseline_lead,
             min_drop_pct=_get_float(env, "MIN_DROP_PCT", 5.0, minimum=0.1),
+            baseline_mode=baseline_mode,
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
             poll_interval_seconds=poll_interval,

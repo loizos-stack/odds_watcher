@@ -99,8 +99,15 @@ class DropDetector:
             # Too early to bother, or the window has already closed.
             return []
 
-        pre_window = seconds > cfg.window_start_seconds
-        in_window = cfg.window_end_seconds <= seconds <= cfg.window_start_seconds
+        first_seen_mode = cfg.baseline_mode == "first-seen"
+        if first_seen_mode:
+            # The first price recorded is the reference and never moves, so the
+            # whole tracked period is alertable.
+            pre_window = False
+            in_window = cfg.window_end_seconds <= seconds <= cfg.baseline_lead_seconds
+        else:
+            pre_window = seconds > cfg.window_start_seconds
+            in_window = cfg.window_end_seconds <= seconds <= cfg.window_start_seconds
         alerts: list[Alert] = []
 
         for quote in quotes:
@@ -116,7 +123,8 @@ class DropDetector:
                 existing=state,
             )
 
-            if not in_window or state is None or not state.baseline_pre_window:
+            has_reference = state is not None and (first_seen_mode or state.baseline_pre_window)
+            if not in_window or not has_reference:
                 continue
 
             reference = state.reference_odds

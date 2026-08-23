@@ -219,3 +219,59 @@ def test_switching_books_leaves_the_old_ones_inert(config, store):
 
     new = DropDetector(dataclasses.replace(config, bookmakers=("Bet365", "DraftKings")), store)
     assert new.process(EVENT, [quote(1.50, bookmaker="betano")], at(5)) == []
+
+
+def _first_seen(config, **overrides):
+    import dataclasses
+
+    return dataclasses.replace(
+        config, baseline_mode="first-seen", baseline_lead_seconds=1200, **overrides
+    )
+
+
+def test_first_seen_mode_signals_every_successive_drop(config, store):
+    """Three cascading 5%+ drops from when tracking starts are three signals."""
+    detector = DropDetector(_first_seen(config), store)
+    signals = []
+
+    for minutes, price in [(20, 2.00), (17, 1.89), (14, 1.79), (11, 1.69)]:
+        alerts = detector.process(EVENT, [quote(price)], at(minutes))
+        for alert in alerts:
+            signals.append((round(alert.reference_odds, 2), alert.quote.odds))
+            store.mark_alerted(alert.quote, ts=at(minutes))
+
+    assert signals == [(2.00, 1.89), (1.89, 1.79), (1.79, 1.69)]
+
+
+def test_first_seen_mode_uses_the_very_first_price(config, store):
+    """No pre-window sample is needed: the first price seen is the reference."""
+    detector = DropDetector(_first_seen(config), store)
+    detector.process(EVENT, [quote(2.00)], at(20))       # first sighting
+    alerts = detector.process(EVENT, [quote(1.80)], at(18))
+    assert alerts[0].reference_odds == 2.00
+    assert alerts[0].drop_pct == pytest.approx(10.0)
+
+
+def test_first_seen_baseline_does_not_follow_the_price(config, store):
+    """A drifting price must not quietly reset the reference."""
+    detector = DropDetector(_first_seen(config), store)
+    detector.process(EVENT, [quote(2.00)], at(20))
+    detector.process(EVENT, [quote(1.98)], at(19))  # small move, no alert
+    detector.process(EVENT, [quote(1.96)], at(18))
+    alerts = detector.process(EVENT, [quote(1.89)], at(17))
+    assert alerts[0].reference_odds == 2.00  # still the first price, not 1.96
+
+
+def test_first_seen_mode_stops_at_kickoff(config, store):
+    detector = DropDetector(_first_seen(config), store)
+    detector.process(EVENT, [quote(2.00)], at(20))
+    assert detector.process(EVENT, [quote(1.50)], at(-1)) == []
+
+
+def test_window_entry_mode_is_unchanged(config, store):
+    """The default rule still ignores drops that finish before the window."""
+    detector = DropDetector(config, store)
+    detector.process(EVENT, [quote(2.00)], at(20))
+    detector.process(EVENT, [quote(1.89)], at(17))
+    detector.process(EVENT, [quote(1.79)], at(14))
+    assert detector.process(EVENT, [quote(1.69)], at(11)) == []
