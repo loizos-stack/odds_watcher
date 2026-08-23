@@ -105,6 +105,7 @@ python -m odds_watcher bookmakers          # valid bookmaker identifiers
 python -m odds_watcher leagues --search x  # valid league identifiers
 python -m odds_watcher sports --all        # every competition, in and out of season
 python -m odds_watcher markets             # market names the books actually offer
+python -m odds_watcher markets --discover  # probe prop keys (The Odds API)
 python -m odds_watcher coverage            # per-league: which books price what
 python -m odds_watcher props               # do props need per-fixture requests?
 python -m odds_watcher probe               # show the prices actually returned
@@ -199,6 +200,36 @@ tests/          72 unit tests, no network access required
 pip install -r requirements.txt
 python -m pytest -q
 ```
+
+## Finding market keys on The Odds API
+
+That provider returns only the featured markets unless specific keys are named
+in the request, and has no endpoint listing which keys exist — so sampling a
+response can never reveal them. `markets --discover` requests the documented
+keys for your sport against a live fixture and reports which ones your books
+actually price:
+
+```bash
+python -m odds_watcher markets --discover
+```
+
+```
+probing 28 market key(s) for baseball_mlb — costs up to 28 credit(s)
+
+returning prices (7):
+    batter_home_runs      draftkings (2)
+    pitcher_strikeouts    draftkings (2)
+    ...
+rejected by the API (3):
+    batter_stolen_bases, batter_triples, pitcher_record_a_win
+
+PROP_MARKETS=batter_hits,batter_home_runs,...
+```
+
+A key the API does not recognise fails the entire request, so rejected keys are
+isolated by retrying the chunk one key at a time rather than losing the batch.
+"Accepted but empty" means the key is valid but unpriced for that fixture — try
+a bigger game before ruling it out.
 
 ## Player props
 

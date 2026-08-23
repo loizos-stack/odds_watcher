@@ -239,3 +239,79 @@ def test_sports_listing_reads_key_title_and_group(monkeypatch):
     assert ("baseball_mlb", "MLB (Baseball)") in rows
     assert ("soccer_epl", "EPL (Soccer)") in rows
     assert len(rows) == 2
+
+
+def _prop_block(markets):
+    return {
+        "id": "m0",
+        "bookmakers": [
+            {"key": "draftkings", "markets": [
+                {"key": key, "outcomes": [
+                    {"name": "Over", "description": "A Player", "price": 1.9, "point": 0.5}]}
+                for key in markets
+            ]}
+        ],
+    }
+
+
+def test_discover_reports_available_empty_and_rejected(monkeypatch):
+    """One bad key fails the whole request, so bad keys must be isolated."""
+    from odds_watcher.http import HttpError
+
+    real = {"batter_home_runs", "pitcher_strikeouts"}
+    bogus = {"batter_moon_landings"}
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        asked = [m for m in url.split("markets=")[1].split("&")[0].split("%2C")]
+        if bogus & set(asked):
+            raise HttpError(422, "INVALID_MARKET", url)
+        return _prop_block([k for k in asked if k in real]), {}
+
+    monkeypatch.setattr("odds_watcher.theoddsapi.request_json_with_headers", fake)
+    client = TheOddsApiClient("k", default_sport="baseball_mlb")
+    result = client.discover_markets(
+        "m0", ["batter_home_runs", "pitcher_strikeouts", "batter_moon_landings", "batter_hits"],
+        chunk=4,
+    )
+
+    assert set(result["available"]) == real
+    assert result["rejected"] == ["batter_moon_landings"]
+    assert "batter_hits" in result["empty"]
+    # first the whole chunk, then each key individually
+    assert len(calls) == 5
+
+
+def test_discover_does_not_retry_when_a_chunk_succeeds(monkeypatch):
+    monkeypatch.setattr(
+        "odds_watcher.theoddsapi.request_json_with_headers",
+        lambda url, **kw: (_prop_block(["batter_home_runs"]), {}),
+    )
+    client = TheOddsApiClient("k", default_sport="baseball_mlb")
+    result = client.discover_markets("m0", ["batter_home_runs", "batter_hits"], chunk=8)
+    assert set(result["available"]) == {"batter_home_runs"}
+    assert result["empty"] == ["batter_hits"]
+    assert result["rejected"] == []
+
+
+def test_server_errors_are_not_mistaken_for_bad_keys(monkeypatch):
+    from odds_watcher.http import HttpError
+
+    def fake(url, **kw):
+        raise HttpError(500, "upstream down", url)
+
+    monkeypatch.setattr("odds_watcher.theoddsapi.request_json_with_headers", fake)
+    client = TheOddsApiClient("k", default_sport="baseball_mlb")
+    with pytest.raises(HttpError):
+        client.discover_markets("m0", ["batter_home_runs"])
+
+
+def test_candidate_catalogue_covers_mlb():
+    from odds_watcher.market_keys import candidates
+
+    keys = candidates("baseball_mlb")
+    assert "batter_home_runs" in keys
+    assert "pitcher_strikeouts" in keys
+    assert "totals_1st_5_innings" in keys
+    assert candidates("underwater_hockey") == ()

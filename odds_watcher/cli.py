@@ -70,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-file", default=".env", help="path to the .env file (default: .env)")
     parser.add_argument("--log-level", default=None, help="override LOG_LEVEL")
     parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="markets: probe documented prop keys to see which your books return",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         dest="include_all",
@@ -500,6 +505,74 @@ def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = Fa
 MARKET_SAMPLE_SIZE = 10
 
 
+def cmd_discover_markets(config: Config) -> int:
+    """Find which non-featured market keys your account actually returns.
+
+    The Odds API only sends markets that were named in the request and has no
+    endpoint listing them, so the documented keys are requested against a live
+    fixture and the ones that answer are reported.
+    """
+    from .market_keys import candidates, known_sports
+
+    store, _, api, _ = _components(config)
+    sport = config.sports[0] if config.sports else ""
+    keys = candidates(sport)
+    if not keys:
+        print(
+            f"No candidate market keys are catalogued for {sport!r}.\n"
+            f"Catalogued sports: {', '.join(known_sports())}",
+            file=sys.stderr,
+        )
+        store.close()
+        return 1
+
+    cost = len(keys) * max(len(config.regions), 1)
+    print(f"probing {len(keys)} market key(s) for {sport} — costs up to {cost} credit(s)\n")
+
+    try:
+        now = now_ts()
+        events = _upcoming(api, config, now, 1)
+        if not events:
+            print("no upcoming fixture to probe", file=sys.stderr)
+            return 1
+        event = events[0]
+        print(f"fixture: {event.name}\n")
+        result = api.discover_markets(event.id, keys, config.bookmakers)
+    except (TransportError, BudgetExceeded) as exc:
+        print(f"✗ market discovery failed: {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
+        _sport_error(api, config, exc)
+        return 1
+    finally:
+        store.close()
+
+    available = result["available"]
+    if available:
+        width = max(len(key) for key in available)
+        print(f"returning prices ({len(available)}):")
+        for key, books in sorted(available.items()):
+            offered = ", ".join(f"{b} ({c})" for b, c in sorted(books.items()))
+            print(f"    {key.ljust(width)}  {offered}")
+    else:
+        print("no candidate key returned prices for this fixture.")
+
+    if result["empty"]:
+        print(f"\naccepted but empty for this fixture ({len(result['empty'])}):")
+        print("    " + ", ".join(sorted(result["empty"])[:20]))
+    if result["rejected"]:
+        print(f"\nrejected by the API ({len(result['rejected'])}):")
+        print("    " + ", ".join(sorted(result["rejected"])))
+
+    if available:
+        props = sorted(available)
+        print("\nAdd to .env — note each key costs a credit per fixture per poll:\n")
+        print("PROP_MARKETS=" + ",".join(props))
+    remaining = getattr(api, "credits_remaining", None)
+    if remaining is not None:
+        print(f"\naccount credits remaining: {remaining}")
+    return 0
+
+
 def cmd_markets(config: Config, search: Optional[str] = None) -> int:
     """List every market name the configured books offer on upcoming fixtures.
 
@@ -924,6 +997,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "probe":
         return cmd_probe(config)
     if args.command == "markets":
+        if args.discover:
+            return cmd_discover_markets(config)
         return cmd_markets(config, args.search)
     if args.command == "coverage":
         return cmd_coverage(config)

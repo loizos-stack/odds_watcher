@@ -203,6 +203,45 @@ class TheOddsApiClient:
         return blocks
 
 
+    def discover_markets(self, event_id: str, candidates: Sequence[str],
+                         bookmakers: Sequence[str] = (), chunk: int = 8) -> dict:
+        """Ask for candidate market keys and report which ones answer.
+
+        Returns ``{"available": {...}, "empty": [...], "rejected": [...]}``.
+        A key the API refuses fails the whole request, so a rejected chunk is
+        retried key by key rather than being written off wholesale.
+        """
+        sport = self.default_sport
+        available: dict = {}
+        empty: list = []
+        rejected: list = []
+
+        def attempt(keys: Sequence[str]) -> bool:
+            try:
+                payload = self._event_odds(sport, event_id, keys, bookmakers)
+            except HttpError as exc:
+                if exc.status in (400, 422, 404):
+                    return False
+                raise
+            found = market_catalogue(payload)
+            for key in keys:
+                if key in found:
+                    available[key] = found[key]
+                else:
+                    empty.append(key)
+            return True
+
+        for start in range(0, len(candidates), chunk):
+            group = list(candidates[start : start + chunk])
+            if attempt(group):
+                continue
+            # One bad key spoils the request, so isolate them.
+            for key in group:
+                if not attempt([key]):
+                    rejected.append(key)
+
+        return {"available": available, "empty": empty, "rejected": rejected}
+
     # -- interface parity with the odds-api.io client ---------------------
     def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> list:
         return parse_quotes(self.get_odds_payloads(event_ids, bookmakers, fallback_limit=len(event_ids)))
