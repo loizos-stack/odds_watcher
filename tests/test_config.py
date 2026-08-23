@@ -168,3 +168,28 @@ def test_unknown_provider_is_rejected():
     with pytest.raises(ConfigError) as exc:
         Config.from_env({**BASE, "ODDS_PROVIDER": "oddspapi"})
     assert "the-odds-api" in str(exc.value)
+
+
+def test_status_names_settings_missing_from_the_users_env(tmp_path, capsys):
+    """.env is gitignored, so new settings never arrive by pulling."""
+    from odds_watcher.cli import _report_missing_settings
+
+    (tmp_path / ".env.example").write_text(
+        "# comment\nODDS_PROVIDER=odds-api-io\nREGIONS=us\nMIN_DROP_PCT=5.0\n\n"
+    )
+    (tmp_path / ".env").write_text("MIN_DROP_PCT=3.0\nODDS_API_KEY=secret\n")
+
+    _report_missing_settings(tmp_path / ".env")
+    out = capsys.readouterr().out
+    assert "ODDS_PROVIDER" in out
+    assert "REGIONS" in out
+    assert "MIN_DROP_PCT" not in out  # present, so not reported
+
+
+def test_no_complaint_when_the_env_is_current(tmp_path, capsys):
+    from odds_watcher.cli import _report_missing_settings
+
+    (tmp_path / ".env.example").write_text("ODDS_PROVIDER=odds-api-io\n")
+    (tmp_path / ".env").write_text("ODDS_PROVIDER=the-odds-api\n")
+    _report_missing_settings(tmp_path / ".env")
+    assert capsys.readouterr().out == ""

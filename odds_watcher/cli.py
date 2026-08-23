@@ -379,7 +379,38 @@ def cmd_chat_id(config: Config) -> int:
     return 0
 
 
-def cmd_status(config: Config) -> int:
+def _env_keys(path: Path) -> list:
+    """Setting names defined in an env-style file, in order."""
+    if not path.is_file():
+        return []
+    keys = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#") and "=" in line:
+            keys.append(line.partition("=")[0].strip())
+    return keys
+
+
+def _report_missing_settings(env_file: Path) -> None:
+    """Name settings that exist in .env.example but not in the user's .env.
+
+    .env is gitignored, so a pull never adds newly introduced settings to it.
+    Silently falling back to defaults is how a setting you meant to change
+    ends up having no effect at all.
+    """
+    example = env_file.parent / ".env.example"
+    if not example.is_file() or not env_file.is_file():
+        return
+    missing = [key for key in _env_keys(example) if key not in set(_env_keys(env_file))]
+    if not missing:
+        return
+    print(f"\n! {len(missing)} setting(s) in .env.example are absent from {env_file.name};")
+    print("  their defaults apply. Copy across any you want to change:")
+    for key in missing:
+        print(f"    {key}")
+
+
+def cmd_status(config: Config, env_file: Optional[Path] = None) -> int:
     store, budget, _, _ = _components(config)
     hour, day = budget.remaining()
     unit = "credits" if config.odds_provider == "the-odds-api" else "requests"
@@ -390,6 +421,8 @@ def cmd_status(config: Config) -> int:
     print(f"alert rule:     drop ≥ {config.min_drop_pct:.1f}% {config.alert_window_label}")
     print(f"bookmakers:     {', '.join(config.bookmakers)}")
     store.close()
+    if env_file is not None:
+        _report_missing_settings(env_file)
     return 0
 
 
@@ -824,7 +857,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "status":
-        return cmd_status(config)
+        return cmd_status(config, Path(args.env_file))
 
     store, _, api, telegram = _components(config)
     watcher = Watcher(config, api, telegram, store)

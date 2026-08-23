@@ -60,6 +60,10 @@ cp .env.example .env
 $EDITOR .env            # fill in ODDS_API_KEY and TELEGRAM_BOT_TOKEN
 ```
 
+`.env` is gitignored, so pulling never adds newly introduced settings to it —
+`status` lists any that exist in `.env.example` but not in your `.env`, whose
+defaults are therefore silently in force.
+
 Find your chat id (after messaging the bot at least once) and put it in `.env`:
 
 ```bash
@@ -95,7 +99,8 @@ python -m odds_watcher probe
 python -m odds_watcher run                 # daemon: polls and alerts
 python -m odds_watcher run --dry-run       # detect and log, send nothing
 python -m odds_watcher once                # single poll (for cron)
-python -m odds_watcher status              # tracked lines + remaining budget
+python -m odds_watcher status              # provider, budget, and any settings
+                                           #   your .env is missing
 python -m odds_watcher bookmakers          # valid bookmaker identifiers
 python -m odds_watcher leagues --search x  # valid league identifiers
 python -m odds_watcher markets             # market names the books actually offer
