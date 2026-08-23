@@ -236,42 +236,65 @@ class Watcher:
         wait = min(upcoming) if upcoming else cfg.idle_poll_interval_seconds
         return int(max(cfg.poll_interval_seconds, min(wait, cfg.idle_poll_interval_seconds)))
 
-    def estimate_poll_cost(self, sports: int) -> int:
-        """Requests one poll costs: odds per sport, plus props when enabled."""
-        per_sport = 2 if self.config.prop_markets else 1
-        return sports * per_sport
+    def estimate_poll_cost(self, now: float) -> int:
+        """Requests one poll costs, at the current slate.
 
-    def warn_if_unaffordable(self, sports: int) -> None:
-        """Say what the configured scope costs before it is spent.
+        Odds are requested per sport, but only for the sports that have a
+        fixture inside the tracking lead right now — not for every configured
+        sport. A wide SPORTS list costs nothing extra at poll time; it costs at
+        refresh time, which is a separate, slower clock.
+        """
+        in_range = {event.sport_key for event in self.events_in_tracking_range(now)}
+        return len(in_range) * (2 if self.config.prop_markets else 1)
 
-        A wide SPORTS list multiplies every poll, and the arithmetic is not
-        obvious from the settings — an allowance can be gone in minutes.
+    def estimate_refresh_cost(self, sports: int) -> int:
+        """Requests one fixture-list refresh costs: every sport, every league."""
+        return sports * max(len(self.config.leagues), 1)
+
+    def warn_if_unaffordable(self, now: float) -> None:
+        """Say what the configured scope costs before much of it is spent.
+
+        The arithmetic is not obvious from the settings — an allowance can be
+        gone in minutes — and the two halves pull in opposite directions: a
+        wide SPORTS list multiplies the fixture refresh, while a short
+        POLL_INTERVAL_SECONDS multiplies the odds requests.
         """
         cfg = self.config
-        per_poll = self.estimate_poll_cost(sports)
-        per_hour = int(per_poll * 3600 / cfg.poll_interval_seconds)
+        sports = len(self.resolve_sports(now))
+        per_poll = self.estimate_poll_cost(now)
+        per_refresh = self.estimate_refresh_cost(sports)
+        polls_per_hour = 3600 / cfg.poll_interval_seconds
+        refreshes_per_hour = 3600 / cfg.events_refresh_seconds
+        odds_per_hour = per_poll * polls_per_hour
+        refresh_per_hour = per_refresh * refreshes_per_hour
+        per_hour = int(odds_per_hour + refresh_per_hour)
         log.info(
-            "%d sport(s) x %s = about %d request(s) per poll, ~%d/hour at a %ds interval",
-            sports,
-            "odds + props" if cfg.prop_markets else "odds",
+            "cost estimate: %d request(s) per poll (%s, %d sport(s) in range) every %ds "
+            "= ~%d/hour, plus %d per fixture refresh (%d sport(s)) every %ds = ~%d/hour; "
+            "~%d request(s)/hour in total",
             per_poll,
-            per_hour,
+            "odds + props" if cfg.prop_markets else "odds",
+            per_poll // (2 if cfg.prop_markets else 1),
             cfg.poll_interval_seconds,
+            int(odds_per_hour),
+            per_refresh,
+            sports,
+            cfg.events_refresh_seconds,
+            int(refresh_per_hour),
+            per_hour,
         )
         remaining = getattr(self.api, "credits_remaining", None)
-        if remaining:
-            polls = remaining // max(per_poll, 1)
-            minutes = polls * cfg.poll_interval_seconds / 60
+        if remaining and per_hour > 0:
             log.warning(
-                "provider balance %d leaves about %d poll(s), roughly %.0f minute(s)",
+                "provider balance %d lasts about %.1f hour(s) at that rate",
                 remaining,
-                polls,
-                minutes,
+                remaining / per_hour,
             )
         if per_hour > cfg.max_requests_per_hour:
             log.warning(
-                "that exceeds MAX_REQUESTS_PER_HOUR (%d), so polls will be skipped. "
-                "Narrow SPORTS, raise POLL_INTERVAL_SECONDS, or drop PROP_MARKETS.",
+                "that exceeds MAX_REQUESTS_PER_HOUR (%d), so requests will be skipped. "
+                "Raise EVENTS_REFRESH_SECONDS or POLL_INTERVAL_SECONDS, narrow SPORTS, "
+                "or drop PROP_MARKETS.",
                 cfg.max_requests_per_hour,
             )
 
@@ -289,7 +312,10 @@ class Watcher:
             started = self.clock()
             try:
                 if first_pass:
-                    self.warn_if_unaffordable(len(self.resolve_sports(started)))
+                    # Refresh first: the estimate needs the slate to know how
+                    # many sports actually have a fixture in range.
+                    self.refresh_events(started)
+                    self.warn_if_unaffordable(started)
                     first_pass = False
                 self.poll_once(started)
             except Exception:  # keep the daemon alive across transient faults

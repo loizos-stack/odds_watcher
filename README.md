@@ -286,19 +286,43 @@ per sport too, and every `soccer_*` league shares one key set.
 
 ## Watching every sport
 
-`SPORTS=all` expands to whatever the provider lists, refreshed daily. On a
-per-request provider each sport costs a request per poll, and `PROP_MARKETS`
-adds a second, so the multiplier is real. Against ParlayAPI's 1,000/month free
-tier, with roughly 30 sports listed:
+`SPORTS=all` expands to whatever the provider lists, refreshed daily — 89
+sports on ParlayAPI. The cost has two halves, and it matters which is which:
 
-| Setup | Requests/hour | Free tier lasts |
-| --- | ---: | --- |
-| 1 sport, no props, 60s | 60 | 16.7 h |
-| 1 sport, all props, 300s | 24 | 41.7 h |
-| all sports, no props, 60s | 1,800 | **33 min** |
-| all sports, all props, 60s | 3,600 | **17 min** |
-| all sports, all props, 300s | 720 | 1.4 h |
-| all sports, all props, 900s | 240 | 4.2 h |
+* **The fixture refresh** asks every sport for its schedule, so it costs one
+  request per configured sport each time the list goes stale
+  (`EVENTS_REFRESH_SECONDS`). This is the half `SPORTS=all` multiplies.
+* **Odds** are only requested for sports that have a fixture inside the
+  tracking lead *at that moment* — one request each, however many sports are
+  configured. Watching 89 sports when eight have a game starting soon costs
+  eight requests, not 89.
+
+So a wide `SPORTS` list is paid for at refresh time, and a short
+`POLL_INTERVAL_SECONDS` is paid for at poll time. Against ParlayAPI's
+1,000/month free tier, with 89 sports listed and ~8 of them in range on a busy
+evening:
+
+| Poll / refresh | Odds per hour | Refresh per hour | Total/hour | 1,000 credits last |
+| --- | ---: | ---: | ---: | --- |
+| 60s / 900s | 480 | 356 | 836 | 1.2 h |
+| 300s / 900s | 96 | 356 | 452 | 2.2 h |
+| 300s / 3600s | 96 | 89 | **185** | **5.4 h** |
+| 600s / 3600s | 48 | 89 | 137 | 7.3 h |
+| 300s / 3600s, + all props | 192 | 89 | 281 | 3.6 h |
+
+Raising `EVENTS_REFRESH_SECONDS` is the single biggest saving under
+`SPORTS=all`; kick-off times do not move, so an hourly refresh loses nothing.
+`.env.all-sports.example` is that third row, ready to copy.
+
+The watcher prints its own estimate on the first poll, counting the sports
+actually in range rather than the ones configured:
+
+```
+cost estimate: 8 request(s) per poll (odds, 8 sport(s) in range) every 300s
+= ~96/hour, plus 89 per fixture refresh (89 sport(s)) every 3600s = ~89/hour;
+~185 request(s)/hour in total
+provider balance 858 lasts about 4.6 hour(s) at that rate
+```
 
 `MAX_REQUESTS_PER_HOUR` / `_PER_DAY` are the guardrail: the watcher throttles
 itself when they are reached rather than draining the account, and `usage`

@@ -433,3 +433,48 @@ def test_the_valid_market_list_is_learned_once_for_all_sports(monkeypatch):
 
     assert len(probes) == 1          # one rejection teaches all four
     assert client._valid_markets == ("h2h", "spreads", "totals")
+
+
+def test_learned_markets_survive_a_restart(monkeypatch, tmp_path):
+    """Relearning through a rejection costs a request per sport, every run."""
+    from odds_watcher.http import HttpError
+    from odds_watcher.store import Store
+
+    store = Store(tmp_path / "keys.db")
+    probes = []
+
+    def fake(url, **kw):
+        asked = url.split("markets=")[1].split("&")[0]
+        if "all" in asked:
+            probes.append(url)
+            raise HttpError(400, '{"message":"Invalid market. Valid values are: '
+                                 'h2h, spreads, totals;"}', url)
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+
+    first = ParlayApiClient("k", featured_markets=("all",), market_cache=store)
+    first._sport_odds("baseball_mlb")
+    assert len(probes) == 1
+
+    # A fresh client, as if the process had been restarted.
+    second = ParlayApiClient("k", featured_markets=("all",), market_cache=store)
+    second._sport_odds("soccer_epl")
+    assert len(probes) == 1  # nothing was relearned
+    assert second._game_markets("soccer_epl") == ("h2h", "spreads", "totals")
+    store.close()
+
+
+def test_a_broken_market_cache_never_breaks_a_poll(monkeypatch):
+    """A cache is an optimisation; losing it must cost requests, not prices."""
+    class Broken:
+        def get_market_keys(self, sport, max_age, now=None):
+            raise RuntimeError("disk gone")
+
+        def save_market_keys(self, sport, keys, now=None):
+            raise RuntimeError("disk gone")
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers",
+                        lambda url, **kw: ([], {}))
+    client = ParlayApiClient("k", featured_markets=("h2h",), market_cache=Broken())
+    assert client._sport_odds("baseball_mlb") == []

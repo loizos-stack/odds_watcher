@@ -31,6 +31,9 @@ BASE_URL = "https://parlay-api.com"
 
 # Markets every sport accepts. Used as the fallback when a wider request is
 # rejected, and as the starting point for "all".
+# The valid-market list is global to the API, not per sport, so it is
+# cached under a key no sport slug can collide with.
+GLOBAL_MARKET_KEYS = "__parlay_game_markets__"
 CORE_GAME_MARKETS = ("h2h", "spreads", "totals")
 
 
@@ -323,6 +326,8 @@ class ParlayApiClient:
         regions: Sequence[str] = (),
         featured_markets: Sequence[str] = ("h2h", "spreads", "totals"),
         bookmakers: Sequence[str] = (),
+        market_cache=None,
+        market_keys_ttl: float = 86400.0,
         **_ignored,
     ):
         self.api_key = api_key
@@ -337,6 +342,10 @@ class ParlayApiClient:
         self.odds_format = odds_format
         self.supports_multi = True
         self.credits_remaining: Optional[int] = None
+        # Learned market keys survive a restart: rediscovering them costs a
+        # rejected request per sport, every run.
+        self.market_cache = market_cache
+        self.market_keys_ttl = market_keys_ttl
         self._game_market_cache: dict = {}
         # The API's valid-market list is global, so one rejection teaches every
         # sport. Probing per sport would waste a request on each of them.
@@ -482,6 +491,26 @@ class ParlayApiClient:
         events = [parse_event(raw) for raw in _as_list(payload)]
         return [event for event in events if event is not None]
 
+    def _cached_keys(self, sport: str) -> tuple:
+        """Market keys learned on an earlier run, if they are still fresh."""
+        if self.market_cache is None:
+            return ()
+        try:
+            keys, _checked_at = self.market_cache.get_market_keys(sport, self.market_keys_ttl)
+        except Exception:  # a cache miss must never break a poll
+            log.debug("market key cache unreadable for %s", sport, exc_info=True)
+            return ()
+        return tuple(keys or ())
+
+    def _remember_keys(self, sport: str, keys: Sequence[str]) -> None:
+        self._game_market_cache[sport] = tuple(keys)
+        if self.market_cache is None or not keys:
+            return
+        try:
+            self.market_cache.save_market_keys(sport, {key: True for key in keys})
+        except Exception:
+            log.debug("could not persist market keys for %s", sport, exc_info=True)
+
     def _wants_all_game_markets(self) -> bool:
         return any(m.strip().lower() in ("all", "*") for m in self.featured_markets)
 
@@ -494,9 +523,16 @@ class ParlayApiClient:
         """
         if sport in self._game_market_cache:
             return self._game_market_cache[sport]
+        cached = self._cached_keys(sport)
+        if cached:
+            self._game_market_cache[sport] = cached
+            return cached
         if self._wants_all_game_markets():
+            if not self._valid_markets:
+                self._valid_markets = self._cached_keys(GLOBAL_MARKET_KEYS)
             if self._valid_markets:
-                # Already learned from another sport's rejection.
+                # Already learned from another sport's rejection, this run or a
+                # previous one.
                 return self._valid_markets
             # Deliberately send the literal "all" once: the API rejects it with
             # the full list of keys it will accept, which is a better source
@@ -527,6 +563,7 @@ class ParlayApiClient:
                     m for m in valid
                     if not m.startswith(("player_", "batter_", "pitcher_"))
                 )
+                self._remember_keys(GLOBAL_MARKET_KEYS, self._valid_markets)
             if self._wants_all_game_markets():
                 wanted = tuple(m for m in valid if not m.startswith(("player_", "batter_", "pitcher_")))
             else:
@@ -543,7 +580,12 @@ class ParlayApiClient:
                 log.warning("%s: falling back to %s", sport, ", ".join(CORE_GAME_MARKETS))
                 wanted = CORE_GAME_MARKETS
                 payload = request(wanted)
-            self._game_market_cache[sport] = wanted
+            self._remember_keys(sport, wanted)
+        else:
+            if markets != ("all",):
+                # Accepted as sent: remember it, so the next run does not have
+                # to relearn this sport through a rejection.
+                self._remember_keys(sport, markets)
         return payload
 
     def _sport_props(self, sport: str) -> Any:

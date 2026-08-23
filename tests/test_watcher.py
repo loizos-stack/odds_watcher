@@ -922,24 +922,45 @@ def test_movements_does_not_claim_stranded_lines_in_first_seen_mode(config, caps
     assert "SIGNALLED" in out
 
 
-def test_poll_cost_is_reported_before_it_is_spent(config, store, caplog):
-    """89 sports x props is ~178 requests a poll; that must be said, not discovered."""
+def test_poll_cost_counts_only_the_sports_with_a_fixture_in_range(config, store, caplog):
+    """89 configured sports do not cost 89 odds requests a poll — only those in range do."""
     import dataclasses
     import logging
 
     class Balance(FakeApi):
         credits_remaining = 858
 
-    cfg = dataclasses.replace(config, prop_markets=("all",), poll_interval_seconds=300)
+    cfg = dataclasses.replace(
+        config,
+        prop_markets=("all",),
+        poll_interval_seconds=300,
+        events_refresh_seconds=3600,
+        sports=tuple(f"sport{i}" for i in range(89)),
+    )
     watcher = Watcher(cfg, Balance([], []), FakeTelegram(), store)
+    # One fixture inside the lead, one far away: only the first sport is billed.
+    watcher._events = [EVENT, dataclasses.replace(FAR_EVENT, sport_key="sport2")]
+    watcher._events[0] = dataclasses.replace(EVENT, sport_key="sport1")
 
     with caplog.at_level(logging.INFO):
-        watcher.warn_if_unaffordable(89)
+        watcher.warn_if_unaffordable(KICKOFF - 300)
 
-    assert watcher.estimate_poll_cost(89) == 178
-    assert "about 178 request(s) per poll" in caplog.text
-    assert "858 leaves about 4 poll(s)" in caplog.text
+    # 1 sport in range x (odds + props) = 2 per poll, not 178.
+    assert watcher.estimate_poll_cost(KICKOFF - 300) == 2
+    assert watcher.estimate_refresh_cost(89) == 89
+    # 2 per poll x 12 polls/hour + 89 per refresh x 1 refresh/hour = 113.
+    assert "~113 request(s)/hour in total" in caplog.text
+    assert "858 lasts about 7.6 hour(s)" in caplog.text
     assert "exceeds MAX_REQUESTS_PER_HOUR" in caplog.text
+
+
+def test_refresh_cost_multiplies_by_league(config, store):
+    """The fixture list is fetched per sport per league, so leagues multiply it."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, leagues=("epl", "laliga", "seriea"))
+    watcher = Watcher(cfg, FakeApi([], []), FakeTelegram(), store)
+    assert watcher.estimate_refresh_cost(4) == 12
 
 
 def test_no_alarm_when_the_scope_fits(config, store, caplog):
@@ -947,8 +968,8 @@ def test_no_alarm_when_the_scope_fits(config, store, caplog):
     import logging
 
     cfg = dataclasses.replace(config, prop_markets=(), poll_interval_seconds=300,
-                              max_requests_per_hour=100)
+                              events_refresh_seconds=900, max_requests_per_hour=100)
     watcher = Watcher(cfg, FakeApi([], []), FakeTelegram(), store)
     with caplog.at_level(logging.WARNING):
-        watcher.warn_if_unaffordable(1)
+        watcher.warn_if_unaffordable(KICKOFF - 300)
     assert "exceeds MAX_REQUESTS_PER_HOUR" not in caplog.text

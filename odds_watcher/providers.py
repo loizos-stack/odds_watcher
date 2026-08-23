@@ -28,6 +28,8 @@ def build_client(config: Config, budget=None, market_cache=None):
             regions=config.regions,
             featured_markets=config.featured_markets,
             bookmakers=config.bookmakers,
+            market_cache=market_cache,
+            market_keys_ttl=config.market_keys_ttl_seconds,
         )
     if config.odds_provider == "the-odds-api":
         return TheOddsApiClient(
