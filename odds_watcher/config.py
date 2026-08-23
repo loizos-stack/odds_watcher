@@ -102,8 +102,8 @@ class Config:
     # exists by the time an event enters the alert window. This only needs to
     # clear the window by a couple of polls — a longer lead spends the request
     # budget on prices that are thrown away.
-    baseline_lead_seconds: int = 900
-    min_drop_pct: float = 5.0
+    baseline_lead_seconds: int = 1200
+    min_drop_pct: float = 10.0
     # How the reference price is chosen:
     #   "window-entry" - the last price before the alert window opens; only
     #                    movement inside the window can alert.
@@ -214,7 +214,7 @@ class Config:
         # The lead has to clear the window by a few polls. Deriving the default
         # from the poll interval means a slower poll does not silently leave
         # fixtures without a baseline — or force the arithmetic onto the user.
-        default_lead = max(900, window_start + 3 * poll_interval)
+        default_lead = max(1200, window_start + 3 * poll_interval)
         baseline_lead = _get_int(env, "BASELINE_LEAD_SECONDS", default_lead, minimum=0)
         # The lead has to clear the window by at least two polls, or a fixture
         # can slip from "not tracked yet" straight into the window with no
@@ -243,7 +243,7 @@ class Config:
             window_start_seconds=window_start,
             window_end_seconds=window_end,
             baseline_lead_seconds=baseline_lead,
-            min_drop_pct=_get_float(env, "MIN_DROP_PCT", 5.0, minimum=0.1),
+            min_drop_pct=_get_float(env, "MIN_DROP_PCT", 10.0, minimum=0.1),
             baseline_mode=baseline_mode,
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),

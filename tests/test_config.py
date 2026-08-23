@@ -122,7 +122,7 @@ def test_baseline_lead_must_clear_the_window_by_two_polls():
 
 def test_default_lead_is_frugal_but_valid():
     config = Config.from_env(BASE)
-    assert config.baseline_lead_seconds == 900
+    assert config.baseline_lead_seconds == 1200  # watch from 20 minutes out
     assert config.baseline_lead_seconds >= config.window_start_seconds + 2 * config.poll_interval_seconds
 
 
@@ -223,10 +223,10 @@ def test_prop_markets_all_is_recognised():
 def test_default_lead_follows_the_poll_interval():
     """A slower poll needs a longer lead; the default should not need editing."""
     fast = Config.from_env({**BASE, "POLL_INTERVAL_SECONDS": "60"})
-    assert fast.baseline_lead_seconds == 900
+    assert fast.baseline_lead_seconds == 1200
 
     slow = Config.from_env({**BASE, "POLL_INTERVAL_SECONDS": "300"})
-    assert slow.baseline_lead_seconds == 600 + 3 * 300
+    assert slow.baseline_lead_seconds == max(1200, 600 + 3 * 300)
     assert slow.baseline_lead_seconds >= slow.window_start_seconds + 2 * slow.poll_interval_seconds
 
 

@@ -275,3 +275,49 @@ def test_window_entry_mode_is_unchanged(config, store):
     detector.process(EVENT, [quote(1.89)], at(17))
     detector.process(EVENT, [quote(1.79)], at(14))
     assert detector.process(EVENT, [quote(1.69)], at(11)) == []
+
+
+def _spec(config):
+    """The configured rule: watch 20-11 min out, signal 10%+ drops in the last 10."""
+    import dataclasses
+
+    return dataclasses.replace(
+        config, baseline_lead_seconds=1200, window_start_seconds=600,
+        window_end_seconds=0, min_drop_pct=10.0, baseline_mode="window-entry",
+    )
+
+
+def test_reference_is_the_last_price_of_the_watch_period(config, store):
+    detector = DropDetector(_spec(config), store)
+    for minutes, price in [(20, 2.20), (16, 2.10), (13, 2.05), (11, 2.00)]:
+        assert detector.process(EVENT, [quote(price)], at(minutes)) == []
+
+    alerts = detector.process(EVENT, [quote(1.79)], at(6))
+    assert alerts[0].reference_odds == 2.00  # the T-11 price, not the T-20 one
+    assert alerts[0].drop_pct == pytest.approx(10.5)
+
+
+def test_nine_percent_does_not_signal(config, store):
+    detector = DropDetector(_spec(config), store)
+    detector.process(EVENT, [quote(2.00)], at(12))
+    assert detector.process(EVENT, [quote(1.82)], at(5)) == []  # -9.0%
+
+
+def test_drops_during_the_watch_period_do_not_signal(config, store):
+    """20 to 11 minutes out is for observing; signals start at 10."""
+    detector = DropDetector(_spec(config), store)
+    detector.process(EVENT, [quote(2.20)], at(20))
+    assert detector.process(EVENT, [quote(1.80)], at(12)) == []  # -18% but too early
+
+
+def test_cascading_ten_percent_drops_inside_the_window(config, store):
+    detector = DropDetector(_spec(config), store)
+    detector.process(EVENT, [quote(2.00)], at(12))
+
+    signals = []
+    for minutes, price in [(9, 1.79), (6, 1.60), (3, 1.43)]:
+        for alert in detector.process(EVENT, [quote(price)], at(minutes)):
+            signals.append((round(alert.reference_odds, 2), alert.quote.odds))
+            store.mark_alerted(alert.quote, ts=at(minutes))
+
+    assert signals == [(2.00, 1.79), (1.79, 1.60), (1.60, 1.43)]

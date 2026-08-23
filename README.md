@@ -40,7 +40,7 @@ than one, and a slow drift produces none.
    (`WINDOW_START_SECONDS`) becomes the **baseline**.
 3. Inside the window (T-10 → kick-off, `WINDOW_END_SECONDS`) every poll compares
    the current price to that baseline. A shortening of at least
-   **`MIN_DROP_PCT` (default 5%)** fires a Telegram message.
+   **`MIN_DROP_PCT` (default 10%)** fires a Telegram message.
 4. After an alert the baseline resets to the alerted price, so a line that keeps
    sliding sends a follow-up only once it drops another full threshold — not on
    every poll.
@@ -206,8 +206,8 @@ Every setting is an environment variable, documented in
 | `OUTCOMES` | *(all)* | e.g. `over,under` to watch totals only |
 | `WINDOW_START_SECONDS` | `600` | Window opens 10 min before kick-off |
 | `WINDOW_END_SECONDS` | `0` | Window closes at kick-off |
-| `BASELINE_LEAD_SECONDS` | `900` | Start recording prices 15 min out |
-| `MIN_DROP_PCT` | `5.0` | Minimum shortening to alert on |
+| `BASELINE_LEAD_SECONDS` | `1200` | Start recording prices 20 min out |
+| `MIN_DROP_PCT` | `10.0` | Minimum shortening to alert on |
 | `MAX_ALERTS_PER_POLL` | `20` | Largest drops win when a poll finds many |
 | `PER_EVENT_ODDS` | `false` | One request per fixture; needed for props |
 | `POLL_INTERVAL_SECONDS` | `60` | Poll cadence while fixtures are close |
