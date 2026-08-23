@@ -202,3 +202,12 @@ def test_blank_featured_markets_falls_back_to_the_defaults():
 
     explicit = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api", "FEATURED_MARKETS": "h2h"})
     assert explicit.featured_markets == ("h2h",)
+
+
+def test_status_reports_the_installed_revision():
+    """A stale checkout is the usual cause of "unrecognized arguments"."""
+    from odds_watcher.cli import _installed_revision
+
+    revision = _installed_revision()
+    assert revision
+    assert "unknown" in revision or len(revision.split()) >= 3

@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from . import __version__
 from .config import ALL_CREDENTIALS, Config, ConfigError, load_dotenv
 from .detector import Alert
 from .http import TransportError
@@ -421,6 +422,29 @@ def cmd_chat_id(config: Config) -> int:
     return 0
 
 
+def _installed_revision() -> str:
+    """The git revision this code is running from, for spotting a stale copy.
+
+    Every setting and command is version-specific, so "that flag does not
+    exist" is usually an un-pulled checkout rather than a bug.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent.parent), "log", "-1",
+             "--format=%h %cs %s"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown (git unavailable)"
+    if result.returncode != 0:
+        return "unknown (not a git checkout)"
+    return result.stdout.strip() or "unknown"
+
+
 def _env_keys(path: Path) -> list:
     """Setting names defined in an env-style file, in order."""
     if not path.is_file():
@@ -460,6 +484,7 @@ def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = Fa
         print("local budget tally cleared (the provider's own usage is unaffected)\n")
     hour, day = budget.remaining()
     unit = "credits" if config.odds_provider == "the-odds-api" else "requests"
+    print(f"version:        {__version__} @ {_installed_revision()}")
     print(f"provider:       {config.odds_provider}")
     print(f"database:       {config.db_path}")
     print(f"tracked lines:  {store.tracked_lines()}")
