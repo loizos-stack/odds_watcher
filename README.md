@@ -250,6 +250,20 @@ isolated by retrying the chunk one key at a time rather than losing the batch.
 "Accepted but empty" means the key is valid but unpriced for that fixture — try
 a bigger game before ruling it out.
 
+## Watching several competitions
+
+`SPORTS` takes a list. On The Odds API each competition is its own sport key,
+so soccer leagues are added there rather than through `LEAGUES`:
+
+```bash
+SPORTS=baseball_mlb,soccer_epl,soccer_spain_la_liga,soccer_italy_serie_a
+```
+
+Odds are fetched per sport — the endpoint is scoped that way and a mixed batch
+returns nothing — so each competition costs its own featured call per poll
+(3 credits x regions), plus its own props per fixture. Market keys are resolved
+per sport too, and every `soccer_*` league shares one key set.
+
 ## Requesting everything
 
 ```bash

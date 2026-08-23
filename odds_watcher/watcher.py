@@ -12,6 +12,7 @@ Request budget is the scarce resource on the free tier (100 requests/hour,
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from collections import defaultdict
@@ -68,7 +69,12 @@ class Watcher:
         for sport, league in targets:
             try:
                 for event in self.api.get_events(sport, league=league):
-                    events[event.id] = event
+                    # Remember which sport a fixture came from: odds are
+                    # fetched per sport, and a fixture looked up under the
+                    # wrong one silently returns no prices.
+                    events[event.id] = (
+                        event if event.sport_key else dataclasses.replace(event, sport_key=sport)
+                    )
             except BudgetExceeded as exc:
                 log.warning("%s", exc)
                 break
@@ -101,18 +107,26 @@ class Watcher:
 
         by_id = {event.id: event for event in events}
         quotes_by_event: dict[str, list[Quote]] = defaultdict(list)
-        # One request per fixture when props are wanted, otherwise batched.
-        batches = (
-            [[event.id] for event in events]
-            if self.config.per_event_odds
-            else list(chunked([event.id for event in events], EVENTS_PER_ODDS_REQUEST))
-        )
-        for batch in batches:
+
+        # Group by sport: a provider whose odds endpoint is scoped by sport
+        # cannot serve a mixed batch.
+        by_sport: dict[str, list[str]] = defaultdict(list)
+        for event in events:
+            by_sport[event.sport_key].append(event.id)
+
+        batches: list[tuple[str, list]] = []
+        for sport, ids in by_sport.items():
+            if self.config.per_event_odds:
+                batches.extend((sport, [event_id]) for event_id in ids)
+            else:
+                batches.extend((sport, list(chunk)) for chunk in chunked(ids, EVENTS_PER_ODDS_REQUEST))
+
+        for sport, batch in batches:
             try:
                 quotes = (
-                    self.api.get_event_odds(batch[0], self.config.bookmakers)
+                    self.api.get_event_odds(batch[0], self.config.bookmakers, sport=sport)
                     if self.config.per_event_odds
-                    else self.api.get_multi_odds(batch, self.config.bookmakers)
+                    else self.api.get_multi_odds(batch, self.config.bookmakers, sport=sport)
                 )
                 for quote in quotes:
                     quotes_by_event[quote.event_id].append(quote)

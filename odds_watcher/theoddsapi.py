@@ -64,7 +64,7 @@ class TheOddsApiClient:
         # Store used to remember which market keys this account can request.
         self.market_cache = market_cache
         self.market_keys_ttl = market_keys_ttl
-        self._resolved_props: Optional[tuple] = None
+        self._resolved_props: dict = {}
         # Populated from response headers after the first metered call.
         self.credits_remaining: Optional[int] = None
         self.credits_used: Optional[int] = None
@@ -199,7 +199,7 @@ class TheOddsApiClient:
         blocks = [b for b in self._featured_odds(sport, bookmakers) if b.get("id") in wanted]
         if self.prop_markets:
             ids = list(event_ids)[:fallback_limit]
-            markets = self.resolve_prop_markets(ids[0], bookmakers) if ids else ()
+            markets = self.resolve_prop_markets(ids[0], bookmakers, sport) if ids else ()
             for event_id in ids:
                 if not markets:
                     break
@@ -217,7 +217,9 @@ class TheOddsApiClient:
     def wants_all_markets(self) -> bool:
         return any(str(m).strip().lower() in ("all", "*") for m in self.prop_markets)
 
-    def resolve_prop_markets(self, event_id: str, bookmakers: Sequence[str] = ()) -> tuple:
+    def resolve_prop_markets(
+        self, event_id: str, bookmakers: Sequence[str] = (), sport: str = ""
+    ) -> tuple:
         """The prop keys to request, expanding "all" against the learned set.
 
         Asking for every documented key on every poll would fail as soon as one
@@ -226,24 +228,23 @@ class TheOddsApiClient:
         """
         if not self.wants_all_markets:
             return tuple(self.prop_markets)
-        if self._resolved_props is not None:
-            return self._resolved_props
+        sport = sport or self.default_sport
+        if sport in self._resolved_props:
+            return self._resolved_props[sport]
 
         from .market_keys import candidates
-
-        sport = self.default_sport
         if self.market_cache is not None:
             cached, _checked = self.market_cache.get_market_keys(sport, self.market_keys_ttl)
             if cached is not None:
-                self._resolved_props = tuple(cached)
+                self._resolved_props[sport] = tuple(cached)
                 log.info("using %d cached market key(s) for %s", len(cached), sport)
-                return self._resolved_props
+                return self._resolved_props[sport]
 
         keys = candidates(sport)
         if not keys:
             log.warning("no candidate market keys catalogued for %s", sport)
-            self._resolved_props = ()
-            return self._resolved_props
+            self._resolved_props[sport] = ()
+            return self._resolved_props[sport]
 
         log.info(
             "probing %d market key(s) for %s (about %d credits, once per %dh)",
@@ -252,7 +253,7 @@ class TheOddsApiClient:
             len(keys) * max(len(self.regions), 1),
             self.market_keys_ttl // 3600,
         )
-        result = self.discover_markets(event_id, keys, bookmakers)
+        result = self.discover_markets(event_id, keys, bookmakers, sport=sport)
         usable = sorted(set(result["available"]) | set(result["empty"]))
         if self.market_cache is not None:
             self.market_cache.save_market_keys(
@@ -265,18 +266,19 @@ class TheOddsApiClient:
             len(usable),
             len(result["rejected"]),
         )
-        self._resolved_props = tuple(usable)
-        return self._resolved_props
+        self._resolved_props[sport] = tuple(usable)
+        return self._resolved_props[sport]
 
     def discover_markets(self, event_id: str, candidates: Sequence[str],
-                         bookmakers: Sequence[str] = (), chunk: int = 8) -> dict:
+                         bookmakers: Sequence[str] = (), chunk: int = 8,
+                         sport: str = "") -> dict:
         """Ask for candidate market keys and report which ones answer.
 
         Returns ``{"available": {...}, "empty": [...], "rejected": [...]}``.
         A key the API refuses fails the whole request, so a rejected chunk is
         retried key by key rather than being written off wholesale.
         """
-        sport = self.default_sport
+        sport = sport or self.default_sport
         available: dict = {}
         empty: list = []
         rejected: list = []
@@ -308,18 +310,33 @@ class TheOddsApiClient:
         return {"available": available, "empty": empty, "rejected": rejected}
 
     # -- interface parity with the odds-api.io client ---------------------
-    def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> list:
-        return parse_quotes(self.get_odds_payloads(event_ids, bookmakers, fallback_limit=len(event_ids)))
+    def get_multi_odds(
+        self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = ""
+    ) -> list:
+        return parse_quotes(
+            self.get_odds_payloads(
+                event_ids, bookmakers, sport=sport, fallback_limit=len(event_ids)
+            )
+        )
 
-    def get_event_odds(self, event_id: str, bookmakers: Sequence[str]) -> list:
-        return parse_quotes(self.get_event_odds_raw(event_id, bookmakers), default_event_id=event_id)
+    def get_event_odds(self, event_id: str, bookmakers: Sequence[str], *, sport: str = "") -> list:
+        return parse_quotes(
+            self.get_event_odds_raw(event_id, bookmakers, sport=sport), default_event_id=event_id
+        )
 
-    def get_event_odds_raw(self, event_id: str, bookmakers: Sequence[str]) -> Any:
-        markets = tuple(self.featured_markets) + self.resolve_prop_markets(event_id, bookmakers)
-        return self._event_odds(self.default_sport, event_id, markets, bookmakers)
+    def get_event_odds_raw(self, event_id: str, bookmakers: Sequence[str], *, sport: str = "") -> Any:
+        sport = sport or self.default_sport
+        markets = tuple(self.featured_markets) + self.resolve_prop_markets(
+            event_id, bookmakers, sport
+        )
+        return self._event_odds(sport, event_id, markets, bookmakers)
 
-    def get_multi_odds_raw(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> Any:
-        return self.get_odds_payloads(event_ids, bookmakers, fallback_limit=len(event_ids))
+    def get_multi_odds_raw(
+        self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = ""
+    ) -> Any:
+        return self.get_odds_payloads(
+            event_ids, bookmakers, sport=sport, fallback_limit=len(event_ids)
+        )
 
     @staticmethod
     def parse_quotes(payload: Any, *, default_event_id: Optional[str] = None) -> list:
@@ -346,6 +363,7 @@ def parse_event(raw: dict) -> Optional[Event]:
         home=str(raw.get("home_team") or "Home"),
         away=str(raw.get("away_team") or "Away"),
         sport=str(raw.get("sport_title") or raw.get("sport_key") or ""),
+        sport_key=str(raw.get("sport_key") or ""),
         league=str(raw.get("sport_title") or ""),
         league_slug=str(raw.get("sport_key") or ""),
     )

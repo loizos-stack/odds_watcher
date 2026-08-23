@@ -25,6 +25,18 @@ EXTRA_GAME_MARKETS = {
     "basketball_nba": ("team_totals", "alternate_spreads", "alternate_totals", "h2h_q1", "totals_q1"),
     "americanfootball_nfl": ("team_totals", "alternate_spreads", "alternate_totals", "h2h_h1", "totals_h1"),
     "icehockey_nhl": ("team_totals", "alternate_spreads", "alternate_totals"),
+    # Soccer keys are shared across every soccer_* competition.
+    "soccer": (
+        "btts",
+        "draw_no_bet",
+        "double_chance",
+        "team_totals",
+        "alternate_spreads",
+        "alternate_totals",
+        "totals_h1",
+        "h2h_h1",
+        "spreads_h1",
+    ),
 }
 
 # Player prop keys, which are only available from the per-event endpoint.
@@ -79,12 +91,35 @@ PROP_MARKETS = {
         "player_shots_on_goal",
         "player_total_saves",
     ),
+    "soccer": (
+        "player_goal_scorer_anytime",
+        "player_first_goal_scorer",
+        "player_last_goal_scorer",
+        "player_to_receive_card",
+        "player_to_receive_red_card",
+        "player_shots_on_target",
+        "player_shots",
+        "player_assists",
+    ),
 }
+
+
+def _lookup(table: dict, sport: str) -> tuple:
+    """Exact key first, then the family prefix.
+
+    Soccer competitions each have their own sport key (soccer_epl,
+    soccer_spain_la_liga, ...) but share one set of market keys, so a prefix
+    entry covers every league without listing them.
+    """
+    if sport in table:
+        return tuple(table[sport])
+    family = sport.split("_", 1)[0]
+    return tuple(table.get(family, ()))
 
 
 def candidates(sport: str) -> tuple:
     """Every non-featured key worth trying for a sport."""
-    return tuple(EXTRA_GAME_MARKETS.get(sport, ())) + tuple(PROP_MARKETS.get(sport, ()))
+    return _lookup(EXTRA_GAME_MARKETS, sport) + _lookup(PROP_MARKETS, sport)
 
 
 def known_sports() -> tuple:

@@ -19,14 +19,16 @@ class FakeApi:
         self.odds_by_call = list(odds_by_call)
         self.event_calls = 0
         self.odds_calls = []
+        self.sports_asked = []
         self.budget = None
 
     def get_events(self, sport, league=None, limit=None):
         self.event_calls += 1
         return list(self.events)
 
-    def get_multi_odds(self, event_ids, bookmakers):
+    def get_multi_odds(self, event_ids, bookmakers, *, sport=""):
         self.odds_calls.append(list(event_ids))
+        self.sports_asked.append(sport)
         return self.odds_by_call.pop(0) if self.odds_by_call else []
 
 
@@ -138,7 +140,7 @@ def test_poll_interval_is_fast_near_kickoff_and_lazy_otherwise(config, store):
 
 def test_api_errors_do_not_kill_the_loop(config, store):
     class BrokenApi(FakeApi):
-        def get_multi_odds(self, event_ids, bookmakers):
+        def get_multi_odds(self, event_ids, bookmakers, *, sport=""):
             raise HttpError(503, "upstream down", "https://api2.odds-api.io/v3/odds/multi")
 
     watcher = Watcher(config, BrokenApi([EVENT], []), FakeTelegram(), store)
@@ -150,7 +152,7 @@ def test_network_failure_is_handled_like_any_other_outage(config, store):
     from odds_watcher.http import TransportError
 
     class OfflineApi(FakeApi):
-        def get_multi_odds(self, event_ids, bookmakers):
+        def get_multi_odds(self, event_ids, bookmakers, *, sport=""):
             raise TransportError("api2.odds-api.io unreachable after 3 attempts")
 
     watcher = Watcher(config, OfflineApi([EVENT], []), FakeTelegram(), store)
@@ -436,8 +438,8 @@ def test_per_event_mode_requests_each_fixture_individually(config, store):
             super().__init__(*a, **kw)
             self.single_calls = []
 
-        def get_event_odds(self, event_id, bookmakers):
-            self.single_calls.append(event_id)
+        def get_event_odds(self, event_id, bookmakers, *, sport=""):
+            self.single_calls.append((event_id, sport))
             return [quote(2.00, event_id=event_id)]
 
     other = Event(id="e3", start_ts=KICKOFF, home="Roma", away="Lazio")
@@ -446,7 +448,7 @@ def test_per_event_mode_requests_each_fixture_individually(config, store):
     watcher = Watcher(cfg, api, FakeTelegram(), store)
 
     watcher.poll_once(at(20))
-    assert api.single_calls == ["e1", "e3"]
+    assert [call[0] for call in api.single_calls] == ["e1", "e3"]
     assert api.odds_calls == []  # never batched
 
 
@@ -586,3 +588,41 @@ def test_leagues_falls_back_to_the_sports_listing(config, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "no separate league list" in out
     assert "baseball_mlb" in out and "soccer_epl" in out
+
+
+def test_fixtures_are_grouped_by_sport_for_odds(config, store):
+    """A provider scoped by sport cannot serve a mixed batch."""
+    import dataclasses
+
+    mlb = Event(id="b1", start_ts=KICKOFF, home="Phillies", away="Cardinals", sport_key="baseball_mlb")
+    epl = Event(id="s1", start_ts=KICKOFF, home="Arsenal", away="Chelsea", sport_key="soccer_epl")
+    laliga = Event(id="s2", start_ts=KICKOFF, home="Real", away="Barca", sport_key="soccer_spain_la_liga")
+
+    cfg = dataclasses.replace(config, sports=("baseball_mlb", "soccer_epl", "soccer_spain_la_liga"))
+    api = FakeApi([mlb, epl, laliga], [[], [], []])
+    watcher = Watcher(cfg, api, FakeTelegram(), store)
+    watcher.poll_once(at(20))
+
+    grouped = dict(zip(api.sports_asked, api.odds_calls))
+    assert grouped["baseball_mlb"] == ["b1"]
+    assert grouped["soccer_epl"] == ["s1"]
+    assert grouped["soccer_spain_la_liga"] == ["s2"]
+
+
+def test_events_are_tagged_with_the_sport_they_came_from(config, store):
+    """Providers that do not name the sport in the payload still need it."""
+    import dataclasses
+
+    untagged = Event(id="x1", start_ts=KICKOFF, home="A", away="B")  # no sport_key
+
+    class PerSportApi(FakeApi):
+        def get_events(self, sport, league=None, limit=None):
+            self.event_calls += 1
+            return [dataclasses.replace(untagged, id=f"{sport}-1")]
+
+    cfg = dataclasses.replace(config, sports=("baseball_mlb", "soccer_epl"))
+    api = PerSportApi([], [[], []])
+    watcher = Watcher(cfg, api, FakeTelegram(), store)
+    watcher.refresh_events(at(20))
+
+    assert {e.sport_key for e in watcher._events} == {"baseball_mlb", "soccer_epl"}

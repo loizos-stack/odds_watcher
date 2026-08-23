@@ -390,3 +390,17 @@ def test_resolution_happens_once_per_client(monkeypatch):
     client.resolve_prop_markets("m0")
     client.resolve_prop_markets("m0")
     assert len(calls) == 1
+
+
+def test_soccer_keys_resolve_by_family_prefix():
+    """Every soccer_* league shares one market-key set."""
+    from odds_watcher.market_keys import candidates
+
+    for league in ("soccer_epl", "soccer_spain_la_liga", "soccer_uefa_champs_league"):
+        keys = candidates(league)
+        assert "player_goal_scorer_anytime" in keys, league
+        assert "btts" in keys, league
+
+    # An exact entry still wins over the prefix.
+    assert "batter_home_runs" in candidates("baseball_mlb")
+    assert "player_goal_scorer_anytime" not in candidates("baseball_mlb")

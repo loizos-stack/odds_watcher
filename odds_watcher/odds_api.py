@@ -50,6 +50,7 @@ class Event:
     home: str
     away: str
     sport: str = ""
+    sport_key: str = ""
     league: str = ""
     league_slug: str = ""
 
@@ -135,12 +136,14 @@ def parse_event(raw: dict) -> Optional[Event]:
         return str(value or "").strip()
 
     league_raw = _first(raw, "league", "competition", "leagueName")
+    sport_raw = raw.get("sport")
     return Event(
         id=str(event_id),
         start_ts=start_ts,
         home=home or "Home",
         away=away or "Away",
-        sport=_name(raw.get("sport")),
+        sport=_name(sport_raw),
+        sport_key=str(sport_raw.get("slug", "")) if isinstance(sport_raw, dict) else "",
         league=_name(league_raw),
         league_slug=str(league_raw.get("slug", "")) if isinstance(league_raw, dict) else "",
     )
@@ -364,23 +367,34 @@ class OddsApiClient:
         events = [parse_event(raw) for raw in _as_list(payload)]
         return [event for event in events if event is not None]
 
-    def get_event_odds_raw(self, event_id: str, bookmakers: Sequence[str]) -> Any:
+    def get_event_odds_raw(
+        self, event_id: str, bookmakers: Sequence[str], *, sport: str = ""
+    ) -> Any:
         """The undecoded /odds payload, for diagnostics."""
         return self._call("odds", {"eventId": event_id, "bookmakers": ",".join(bookmakers)})
 
-    def get_event_odds(self, event_id: str, bookmakers: Sequence[str]) -> list[Quote]:
+    def get_event_odds(
+        self, event_id: str, bookmakers: Sequence[str], *, sport: str = ""
+    ) -> list[Quote]:
         payload = self.get_event_odds_raw(event_id, bookmakers)
         return parse_quotes(payload, default_event_id=event_id)
 
-    def get_multi_odds_raw(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> Any:
+    def get_multi_odds_raw(
+        self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = ""
+    ) -> Any:
         """The undecoded /odds/multi payload, for diagnostics and discovery."""
         return self._call(
             "odds/multi",
             {"eventIds": ",".join(event_ids), "bookmakers": ",".join(bookmakers)},
         )
 
-    def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str]) -> list[Quote]:
+    def get_multi_odds(
+        self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = ""
+    ) -> list[Quote]:
         """Odds for several events in a single request.
+
+        ``sport`` is accepted for interface parity; this provider identifies
+        fixtures by event id alone.
 
         Falls back to one call per event when the endpoint is unavailable on
         the account's plan, so the watcher keeps working either way.
@@ -454,7 +468,12 @@ class OddsApiClient:
         return market_catalogue(payload)
 
     def get_odds_payloads(
-        self, event_ids: Sequence[str], bookmakers: Sequence[str], *, fallback_limit: int = 5
+        self,
+        event_ids: Sequence[str],
+        bookmakers: Sequence[str],
+        *,
+        sport: str = "",
+        fallback_limit: int = 5,
     ) -> list:
         """Raw odds blocks for several fixtures, batched where the plan allows.
 
