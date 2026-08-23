@@ -835,3 +835,32 @@ def test_unknown_balance_is_said_out_loud(config, capsys, monkeypatch, tmp_path)
     out = capsys.readouterr().out
     assert "did not report a remaining allowance" in out
     assert "not the provider's" in out
+
+
+def test_sport_hint_does_not_fire_on_every_sports_url(config, capsys, monkeypatch):
+    """Every endpoint path contains "/sports/"; that is not a bad slug."""
+    from odds_watcher import cli
+    from odds_watcher.http import HttpError
+
+    class Api:
+        budget = None
+
+        def get_sports(self, include_all=False):
+            raise AssertionError("should not look up sports for a market error")
+
+    market_error = HttpError(
+        400, '{"error":"INVALID_MARKET"}', "https://parlay-api.com/v1/sports/baseball_mlb/odds"
+    )
+    cli._sport_error(Api(), config, market_error)
+    assert capsys.readouterr().out == ""
+
+    slug_error = HttpError(400, '{"error":"Invalid sport slug"}', "https://x/v1/sports/Baseball/odds")
+
+    class Listing(Api):
+        def get_sports(self, include_all=False):
+            return [("baseball_mlb", "MLB")]
+
+    import dataclasses
+
+    cli._sport_error(Listing(), dataclasses.replace(config, sports=("Baseball",)), slug_error)
+    assert "slugs are lowercase" in capsys.readouterr().out

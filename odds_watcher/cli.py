@@ -340,9 +340,20 @@ def _budget_hint(config: Config, exc) -> None:
     )
 
 
+# Phrases that mean the sport itself was rejected, as opposed to any error
+# whose URL merely contains "/sports/".
+_BAD_SPORT_SIGNS = ("invalid sport", "unknown sport", "sport slug", "sport not found",
+                    "unsupported sport", "no such sport")
+
+
 def _sport_error(api, config: Config, exc) -> None:
-    """Explain a failure that is really a bad sport slug."""
-    if "sport" not in str(exc).lower():
+    """Explain a failure that is really a bad sport slug.
+
+    Matching on the word "sport" alone misfires on every error from a
+    /sports/{key}/... endpoint, which is all of them.
+    """
+    message = str(exc).lower()
+    if not any(sign in message for sign in _BAD_SPORT_SIGNS):
         return
     print("\nThe sport identifier in SPORTS is not one this API accepts (slugs are lowercase).")
     _suggest_sports(api, config.sports)

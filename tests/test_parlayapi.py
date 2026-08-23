@@ -306,3 +306,66 @@ def test_prop_market_reference_endpoint(monkeypatch):
     rows = ParlayApiClient("k").prop_market_keys("baseball_mlb")
     assert rows == [("player_home_runs", "Home Runs")]
     assert calls[0].endswith("/v1/sports/baseball_mlb/props/markets")
+
+
+def test_invalid_market_error_is_parsed():
+    from odds_watcher.parlayapi import valid_markets_from_error
+
+    message = (
+        "HTTP 400 for https://parlay-api.com/v1/sports/baseball_mlb/odds?markets=all: "
+        '{"detail":{"error":"INVALID_MARKET","message":"Invalid market \'all\'. '
+        "Valid values are: alternate_spreads, alternate_totals, btts, h2h, spreads, "
+        'totals, totals_1st_5_innings; any player_*/batter_*/pitcher_*/anytime"}}'
+    )
+    keys = valid_markets_from_error(message)
+    assert "h2h" in keys and "totals" in keys and "totals_1st_5_innings" in keys
+    assert "all" not in keys
+    assert valid_markets_from_error("HTTP 500 upstream down") == ()
+
+
+def test_all_markets_retries_with_the_set_the_api_accepts(monkeypatch):
+    """"all" is not a market name; the API's own rejection names the valid set."""
+    from odds_watcher.http import HttpError
+
+    valid = "h2h, spreads, totals, team_totals, btts"
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        asked = url.split("markets=")[1].split("&")[0]
+        if "all" in asked:
+            raise HttpError(400, '{"detail":{"error":"INVALID_MARKET","message":'
+                                 f'"Invalid market \'all\'. Valid values are: {valid}; any player_*"}}}}', url)
+        if "btts" in asked:   # a soccer market this sport rejects
+            raise HttpError(400, "INVALID_MARKET for this sport", url)
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", default_sport="baseball_mlb", featured_markets=("all",))
+    client._sport_odds("baseball_mlb")
+
+    # all -> the parsed set -> the core three
+    assert len(calls) == 3
+    assert "markets=h2h%2Cspreads%2Ctotals" in calls[2]
+    # and the working set is remembered rather than rediscovered
+    client._sport_odds("baseball_mlb")
+    assert len(calls) == 4
+
+
+def test_explicit_markets_are_narrowed_to_the_valid_ones(monkeypatch):
+    from odds_watcher.http import HttpError
+
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        asked = url.split("markets=")[1].split("&")[0]
+        if "moonlines" in asked:
+            raise HttpError(400, '{"message":"Invalid market. Valid values are: h2h, totals;"}', url)
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", default_sport="baseball_mlb",
+                             featured_markets=("h2h", "moonlines", "totals"))
+    client._sport_odds("baseball_mlb")
+    assert "markets=h2h%2Ctotals" in calls[1]

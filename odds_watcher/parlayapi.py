@@ -28,6 +28,30 @@ from .util import parse_timestamp
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://parlay-api.com"
+
+# Markets every sport accepts. Used as the fallback when a wider request is
+# rejected, and as the starting point for "all".
+CORE_GAME_MARKETS = ("h2h", "spreads", "totals")
+
+
+def valid_markets_from_error(message: str) -> tuple:
+    """The market keys an INVALID_MARKET response lists as acceptable.
+
+    The API answers a bad market with the full set it will accept, which is a
+    better source than any list hard-coded here.
+    """
+    marker = "Valid values are:"
+    if marker not in message:
+        return ()
+    tail = message.split(marker, 1)[1]
+    tail = tail.split(";")[0]
+    keys = []
+    for part in tail.replace("\\n", " ").split(","):
+        key = part.strip().strip("'\"").strip()
+        key = key.split(" ")[0].strip("'\".")
+        if key and all(ch.isalnum() or ch == "_" for ch in key):
+            keys.append(key)
+    return tuple(dict.fromkeys(keys))
 _LIST_KEYS = ("data", "events", "games", "odds", "results", "items", "props", "markets")
 
 
@@ -313,6 +337,7 @@ class ParlayApiClient:
         self.odds_format = odds_format
         self.supports_multi = True
         self.credits_remaining: Optional[int] = None
+        self._game_market_cache: dict = {}
 
     # -- plumbing ---------------------------------------------------------
     def _call(self, path: str, params: Optional[dict] = None, *, metered: bool = True) -> Any:
@@ -444,17 +469,61 @@ class ParlayApiClient:
         events = [parse_event(raw) for raw in _as_list(payload)]
         return [event for event in events if event is not None]
 
+    def _wants_all_game_markets(self) -> bool:
+        return any(m.strip().lower() in ("all", "*") for m in self.featured_markets)
+
+    def _game_markets(self, sport: str) -> tuple:
+        """The market keys to request for a sport.
+
+        "all" is not a market name — the API rejects it — so it is resolved to
+        the set the API itself reports as valid, learned on the first rejection
+        and remembered per sport.
+        """
+        if sport in self._game_market_cache:
+            return self._game_market_cache[sport]
+        if self._wants_all_game_markets():
+            # Deliberately send the literal "all" once: the API rejects it with
+            # the full list of keys it will accept, which is a better source
+            # than any list hard-coded here. The result is cached per sport.
+            return ("all",)
+        return tuple(self.featured_markets)
+
     def _sport_odds(self, sport: str) -> Any:
         """Game markets. Without an explicit `markets` the API returns h2h only."""
-        params = {
-            "markets": ",".join(self.featured_markets),
-            "oddsFormat": self.odds_format,
-        }
-        if self.regions:
-            params["regions"] = ",".join(self.regions)
-        if self.bookmakers:
-            params["bookmakers"] = ",".join(self.bookmakers)
-        return self._call(f"v1/sports/{sport}/odds", params)
+
+        def request(markets: Sequence[str]) -> Any:
+            params = {"markets": ",".join(markets), "oddsFormat": self.odds_format}
+            if self.regions:
+                params["regions"] = ",".join(self.regions)
+            if self.bookmakers:
+                params["bookmakers"] = ",".join(self.bookmakers)
+            return self._call(f"v1/sports/{sport}/odds", params)
+
+        markets = self._game_markets(sport)
+        try:
+            payload = request(markets)
+        except HttpError as exc:
+            valid = valid_markets_from_error(str(exc)) if exc.status == 400 else ()
+            if not valid:
+                raise
+            if self._wants_all_game_markets():
+                wanted = tuple(m for m in valid if not m.startswith(("player_", "batter_", "pitcher_")))
+            else:
+                wanted = tuple(m for m in markets if m in valid) or CORE_GAME_MARKETS
+            log.warning(
+                "%s rejected the requested markets; retrying with the %d it accepts",
+                sport,
+                len(wanted),
+            )
+            try:
+                payload = request(wanted)
+            except HttpError:
+                # Some listed keys belong to other sports; fall back to the core.
+                log.warning("%s: falling back to %s", sport, ", ".join(CORE_GAME_MARKETS))
+                wanted = CORE_GAME_MARKETS
+                payload = request(wanted)
+            self._game_market_cache[sport] = wanted
+        return payload
 
     def _sport_props(self, sport: str) -> Any:
         """Player props, which arrive as flat rows rather than nested markets."""
