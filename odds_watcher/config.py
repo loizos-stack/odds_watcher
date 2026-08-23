@@ -192,8 +192,12 @@ class Config:
                 "WINDOW_END_SECONDS must be smaller than WINDOW_START_SECONDS "
                 f"(got end={window_end}, start={window_start})"
             )
-        baseline_lead = _get_int(env, "BASELINE_LEAD_SECONDS", 900, minimum=0)
         poll_interval = _get_int(env, "POLL_INTERVAL_SECONDS", 60, minimum=10)
+        # The lead has to clear the window by a few polls. Deriving the default
+        # from the poll interval means a slower poll does not silently leave
+        # fixtures without a baseline — or force the arithmetic onto the user.
+        default_lead = max(900, window_start + 3 * poll_interval)
+        baseline_lead = _get_int(env, "BASELINE_LEAD_SECONDS", default_lead, minimum=0)
         # The lead has to clear the window by at least two polls, or a fixture
         # can slip from "not tracked yet" straight into the window with no
         # pre-window price — and a line with no baseline can never alert.
@@ -203,7 +207,10 @@ class Config:
                 f"BASELINE_LEAD_SECONDS ({baseline_lead}) must be at least "
                 f"WINDOW_START_SECONDS + 2 x POLL_INTERVAL_SECONDS ({minimum_lead}), "
                 "otherwise fixtures can enter the alert window with no baseline price "
-                "and will never alert"
+                "and will never alert.\n"
+                f"  Either set BASELINE_LEAD_SECONDS={default_lead}, or lower "
+                f"POLL_INTERVAL_SECONDS to {max((baseline_lead - window_start) // 2, 10)} "
+                "or less. Removing BASELINE_LEAD_SECONDS from .env derives it for you."
             )
 
         return cls(

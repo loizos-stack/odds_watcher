@@ -218,3 +218,22 @@ def test_prop_markets_all_is_recognised():
         assert Config.from_env({**BASE, "PROP_MARKETS": value}).wants_all_markets
     assert not Config.from_env({**BASE, "PROP_MARKETS": "batter_hits"}).wants_all_markets
     assert not Config.from_env(BASE).wants_all_markets
+
+
+def test_default_lead_follows_the_poll_interval():
+    """A slower poll needs a longer lead; the default should not need editing."""
+    fast = Config.from_env({**BASE, "POLL_INTERVAL_SECONDS": "60"})
+    assert fast.baseline_lead_seconds == 900
+
+    slow = Config.from_env({**BASE, "POLL_INTERVAL_SECONDS": "300"})
+    assert slow.baseline_lead_seconds == 600 + 3 * 300
+    assert slow.baseline_lead_seconds >= slow.window_start_seconds + 2 * slow.poll_interval_seconds
+
+
+def test_explicit_lead_that_is_too_short_names_the_way_out():
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env({**BASE, "POLL_INTERVAL_SECONDS": "300", "BASELINE_LEAD_SECONDS": "900"})
+    message = str(exc.value)
+    assert "BASELINE_LEAD_SECONDS=1500" in message
+    assert "POLL_INTERVAL_SECONDS to 150" in message
+    assert "Removing BASELINE_LEAD_SECONDS" in message
