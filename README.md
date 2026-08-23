@@ -148,6 +148,16 @@ docker build -t odds-watcher .
 docker run -d --name odds-watcher --env-file .env -v odds-data:/data odds-watcher
 ```
 
+**Windows** — start a dry run at a set time, or register a scheduled task:
+
+```powershell
+.\scripts\dry-run.ps1 -At "20:10"            # waits in the console, then runs
+.\scripts\schedule-dry-run.ps1 -At "20:10"   # survives the console closing
+```
+
+The machine has to be awake at that time; sleep delays the task rather than
+running it.
+
 **cron** (poll every minute; state lives in the database between runs):
 
 ```cron
