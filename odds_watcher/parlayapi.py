@@ -265,6 +265,16 @@ class ParlayApiClient:
                 break
         return data
 
+    def fetch_quota(self) -> dict:
+        """The provider's own remaining allowance, from response headers.
+
+        Deliberately bypasses the local cap: being unable to find out how much
+        is left because the local cap is spent is exactly backwards. It does
+        cost one real request, so callers make it opt-in.
+        """
+        self._call("v1/sports", metered=False)
+        return {"remaining": self.credits_remaining, "used": None, "last_call": None}
+
     # -- listings ---------------------------------------------------------
     def get_sports(self, include_all: bool = False) -> list:
         # Nothing documents this endpoint as free, so it is counted. Better to

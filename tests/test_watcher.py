@@ -756,3 +756,57 @@ def test_empty_sports_listing_is_loud(config, store, caplog):
     with caplog.at_level(logging.ERROR):
         assert watcher.resolve_sports(at(30)) == ()
     assert "resolved to no sports" in caplog.text
+
+
+def test_balance_check_is_opt_in_when_it_costs_a_request(config, capsys, monkeypatch, tmp_path):
+    """Spending quota to find out how much quota is left must be deliberate."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.store import RequestBudget, Store
+
+    class Metered:
+        budget = None
+        calls = 0
+
+        def fetch_quota(self):
+            type(self).calls += 1
+            return {"remaining": 520}
+
+    def components(cfg_):
+        # A fresh store per invocation, as the real factory does.
+        store = Store(tmp_path / "optin.db")
+        budget = RequestBudget(store, cfg_.max_requests_per_hour, cfg_.max_requests_per_day)
+        return store, budget, Metered(), None
+
+    cfg = dataclasses.replace(config, odds_provider="parlay-api")
+    monkeypatch.setattr(cli, "_components", components)
+
+    cli.cmd_usage(cfg)
+    assert Metered.calls == 0
+    assert "--check-balance" in capsys.readouterr().out
+
+    cli.cmd_usage(cfg, check_balance=True)
+    assert Metered.calls == 1
+    assert "520 remaining" in capsys.readouterr().out
+
+
+def test_balance_check_is_automatic_when_it_is_free(config, capsys, monkeypatch, tmp_path):
+    """The Odds API reports the balance on a free endpoint, so always read it."""
+    import dataclasses
+
+    from odds_watcher import cli
+    from odds_watcher.store import RequestBudget, Store
+
+    store = Store(tmp_path / "free.db")
+    budget = RequestBudget(store, config.max_requests_per_hour, config.max_requests_per_day)
+
+    class FreeQuota:
+        budget = None
+
+        def fetch_quota(self):
+            return {"remaining": 19000, "used": 1000}
+
+    monkeypatch.setattr(cli, "_components", lambda c: (store, budget, FreeQuota(), None))
+    cli.cmd_usage(dataclasses.replace(config, odds_provider="the-odds-api"))
+    assert "19000 remaining" in capsys.readouterr().out

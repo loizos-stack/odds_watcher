@@ -82,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="include out-of-season competitions in the `sports` listing",
     )
     parser.add_argument(
+        "--check-balance",
+        action="store_true",
+        help="usage: query the provider's remaining allowance (costs one request)",
+    )
+    parser.add_argument(
         "--reset-budget",
         action="store_true",
         help="clear the watcher's local request/credit tally (status)",
@@ -482,7 +487,7 @@ def _report_missing_settings(env_file: Path) -> None:
         print(f"    {key}")
 
 
-def cmd_usage(config: Config) -> int:
+def cmd_usage(config: Config, check_balance: bool = False) -> int:
     """Local spend, the provider's own balance, and the resulting burn rate."""
     store, budget, api, _ = _components(config)
     now = now_ts()
@@ -499,12 +504,17 @@ def cmd_usage(config: Config) -> int:
           f"{day_left} left)")
 
     quota = None
-    if hasattr(api, "fetch_quota"):
+    free_balance_check = config.odds_provider == "the-odds-api"
+    if hasattr(api, "fetch_quota") and (free_balance_check or check_balance):
         try:
             quota = api.fetch_quota()
         except (TransportError, BudgetExceeded) as exc:
             print(f"\n! could not read the account balance: {exc}", file=sys.stderr)
     store.close()
+
+    if quota is None and hasattr(api, "fetch_quota") and not free_balance_check:
+        print("\n· account balance not checked (costs one request): "
+              "py -m odds_watcher usage --check-balance")
 
     if quota and quota.get("remaining") is not None:
         remaining = quota["remaining"]
@@ -1048,7 +1058,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "chat-id":
         return cmd_chat_id(config)
     if args.command == "usage":
-        return cmd_usage(config)
+        return cmd_usage(config, args.check_balance)
     if args.command == "status":
         return cmd_status(config, Path(args.env_file), args.reset_budget)
 
