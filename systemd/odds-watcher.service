@@ -1,5 +1,5 @@
 [Unit]
-Description=Telegram alerts for late odds drops (bet365 / betano)
+Description=Telegram alerts for late odds drops
 After=network-online.target
 Wants=network-online.target
 
@@ -11,6 +11,15 @@ EnvironmentFile=/opt/odds_watcher/.env
 ExecStart=/usr/bin/python3 -m odds_watcher run
 Restart=always
 RestartSec=15
+# The database is the only state; everything else can be read-only.
+# ProtectSystem=strict makes /opt read-only, so the .env must set
+#   DB_PATH=/var/lib/odds-watcher/odds_watcher.db
+StateDirectory=odds-watcher
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/odds-watcher
 StandardOutput=journal
 StandardError=journal
 

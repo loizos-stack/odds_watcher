@@ -1,5 +1,8 @@
 """Persistence: baselines survive restarts, budget is enforced across runs."""
 
+import dataclasses
+import sqlite3
+
 import pytest
 
 from odds_watcher.odds_api import Quote
@@ -248,3 +251,46 @@ def test_movement_summary_counts_stranded_lines(store):
     rows = {r["event_name"]: r for r in store.movements()}
     assert rows["A vs B"]["baseline_pre_window"] == 1
     assert rows["C vs D"]["baseline_pre_window"] == 0
+
+
+def test_a_line_priced_once_is_counted_as_such(tmp_path):
+    """"Nothing moved" and "we only looked once" are different failures."""
+    store = Store(tmp_path / "samples.db")
+    seen_twice = Quote("e1", "bet365", "h2h", "", "Home", 2.00)
+    store.record(seen_twice, pre_window=True, event_start=5000, ts=1)
+    store.record(dataclasses.replace(seen_twice, odds=1.90), pre_window=False,
+                 event_start=5000, ts=2)
+    store.record(Quote("e2", "bet365", "h2h", "", "Home", 3.00),
+                 pre_window=True, event_start=5000, ts=1)
+    store.commit()
+
+    summary = store.movement_summary()
+    assert summary["tracked"] == 2
+    assert summary["seen_once"] == 1
+    by_event = {row["event_id"]: row["samples"] for row in store.movements()}
+    assert by_event == {"e1": 2, "e2": 1}
+    store.close()
+
+
+def test_the_samples_column_is_added_to_an_older_database(tmp_path):
+    """An existing database must survive the upgrade, not be rebuilt."""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """CREATE TABLE line_state (
+             event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, market TEXT NOT NULL,
+             line TEXT NOT NULL, outcome TEXT NOT NULL, baseline_odds REAL NOT NULL,
+             baseline_ts REAL NOT NULL, baseline_pre_window INTEGER NOT NULL DEFAULT 0,
+             last_odds REAL NOT NULL, last_ts REAL NOT NULL, alert_odds REAL, alert_ts REAL,
+             alert_count INTEGER NOT NULL DEFAULT 0, event_start REAL NOT NULL,
+             PRIMARY KEY (event_id, bookmaker, market, line, outcome))"""
+    )
+    conn.execute(
+        "INSERT INTO line_state VALUES ('e1','bet365','h2h','','Home',2.0,1,1,1.9,2,NULL,NULL,0,5000)"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    assert store.movement_summary()["seen_once"] == 1  # defaulted, and readable
+    store.close()

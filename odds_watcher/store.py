@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS line_state (
     alert_count   INTEGER NOT NULL DEFAULT 0,
     event_start   REAL NOT NULL,
     event_name    TEXT NOT NULL DEFAULT '',
+    samples       INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (event_id, bookmaker, market, line, outcome)
 );
 
@@ -113,6 +114,12 @@ class Store:
             self.conn.execute(
                 "ALTER TABLE line_state ADD COLUMN event_name TEXT NOT NULL DEFAULT ''"
             )
+        if "samples" not in line_columns:
+            # A line seen once cannot move, however far the market ran. Without
+            # this count that case is indistinguishable from a quiet market.
+            self.conn.execute(
+                "ALTER TABLE line_state ADD COLUMN samples INTEGER NOT NULL DEFAULT 1"
+            )
 
     def commit(self) -> None:
         """Flush pending writes.
@@ -185,13 +192,13 @@ class Store:
             self.conn.execute(
                 """UPDATE line_state
                    SET baseline_odds=?, baseline_ts=?, baseline_pre_window=1,
-                       last_odds=?, last_ts=?, event_start=?
+                       last_odds=?, last_ts=?, event_start=?, samples=samples+1
                    WHERE event_id=? AND bookmaker=? AND market=? AND line=? AND outcome=?""",
                 (quote.odds, ts, quote.odds, ts, event_start, *quote.key),
             )
         else:
             self.conn.execute(
-                """UPDATE line_state SET last_odds=?, last_ts=?, event_start=?
+                """UPDATE line_state SET last_odds=?, last_ts=?, event_start=?, samples=samples+1
                    WHERE event_id=? AND bookmaker=? AND market=? AND line=? AND outcome=?""",
                 (quote.odds, ts, event_start, *quote.key),
             )
@@ -215,7 +222,7 @@ class Store:
         rows = self.conn.execute(
             """SELECT event_name, event_id, bookmaker, market, line, outcome,
                       baseline_odds, last_odds, alert_count, event_start,
-                      baseline_pre_window
+                      baseline_pre_window, samples
                FROM line_state
                WHERE event_start >= ? AND baseline_odds > 0
                ORDER BY (baseline_odds - last_odds) / baseline_odds DESC
@@ -234,6 +241,7 @@ class Store:
                  SUM(CASE WHEN last_odds = baseline_odds THEN 1 ELSE 0 END) AS flat,
                  MAX((baseline_odds - last_odds) / baseline_odds) AS biggest_drop,
                  SUM(baseline_pre_window) AS alertable,
+                 SUM(CASE WHEN samples < 2 THEN 1 ELSE 0 END) AS seen_once,
                  SUM(CASE WHEN baseline_pre_window = 0
                           AND last_odds < baseline_odds THEN 1 ELSE 0 END) AS fell_unalertable
                FROM line_state WHERE event_start >= ? AND baseline_odds > 0""",

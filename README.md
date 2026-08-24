@@ -149,6 +149,38 @@ and consider raising `POLL_INTERVAL_SECONDS` or narrowing `LEAGUES`.
 
 ## Deployment
 
+**A VPS** — the useful shape for this, since a laptop that sleeps misses
+kick-offs. Any 1 GB box will do; the watcher is stdlib-only, so there is
+nothing to install but Python.
+
+```bash
+# as root, on a fresh Debian/Ubuntu box
+adduser --system --group --home /opt/odds_watcher odds
+git clone <your fork> /opt/odds_watcher
+install -d -o odds -g odds /var/lib/odds-watcher
+
+cp /opt/odds_watcher/.env.focused.example /opt/odds_watcher/.env
+$EDITOR /opt/odds_watcher/.env          # the three secrets, and DB_PATH
+chown odds:odds /opt/odds_watcher/.env
+chmod 600 /opt/odds_watcher/.env        # it holds your API key and bot token
+
+cp /opt/odds_watcher/systemd/odds-watcher.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now odds-watcher
+journalctl -u odds-watcher -f
+```
+
+Set the box's clock to UTC and leave it there — every window in this tool is
+computed from kick-off timestamps, so a drifting clock silently shifts the
+alert window. `timedatectl set-ntp true` is enough.
+
+Note what a VPS does and does not buy. It buys uptime: the watcher is awake
+for every kick-off instead of only when a laptop happens to be open. It does
+not buy credits, and credits are the binding constraint on a free tier — an
+unattended `SPORTS=all` will spend a month's allowance in an afternoon. Size
+the scope first (below), then move it to a server.
+
+
 **systemd** (see `systemd/odds-watcher.service`):
 
 ```bash
@@ -283,6 +315,46 @@ Odds are fetched per sport — the endpoint is scoped that way and a mixed batch
 returns nothing — so each competition costs its own featured call per poll
 (3 credits x regions), plus its own props per fixture. Market keys are resolved
 per sport too, and every `soccer_*` league shares one key set.
+
+## What a free tier can actually watch
+
+Credits are not spent per game. One request returns every fixture for a sport,
+so six matches kicking off at 15:00 cost exactly as much as one. What
+multiplies is **how often you look**, and **how many sports you look at**:
+
+```
+credits per kickoff cluster  =  BASELINE_LEAD_SECONDS / POLL_INTERVAL_SECONDS
+credits per day (idle)       =  sports x 86400 / EVENTS_REFRESH_SECONDS
+```
+
+At a 60s poll over a 20-minute lead that is 20 credits per cluster. On
+ParlayAPI's 1,000/month free tier:
+
+| Scope | Fixture refresh | Odds | 1,000 credits buy |
+| --- | ---: | ---: | --- |
+| 1 sport, 60s poll, 6h refresh | 120/mo | 20/cluster | **~44 clusters a month** |
+| 1 sport, 300s poll, 6h refresh | 120/mo | 4/cluster | ~220 clusters, 4 samples each |
+| 95 sports, 300s poll, 1h refresh | 68,400/mo | — | **4 hours, then nothing** |
+
+The last row is the trap, and it fails in a way that looks like a quiet
+market rather than a budget problem: with 95 sports something is always inside
+the tracking lead, so the watcher never idles, and the allowance goes on
+visiting thousands of lines **once each**. A line priced once cannot move, so
+no threshold — 10%, 2%, 0.1% — will ever signal on it.
+
+Movement needs at least two samples of the same line before kick-off. Spending
+the budget on breadth buys one sample of everything; spending it on depth buys
+twenty samples of one slate. Only the second can produce an alert.
+
+`python -m odds_watcher movements` names which of the two you got:
+
+```
+1,412 tracked line(s): 0 fell, 0 rose, 1,412 unchanged
+1,412 of 1,412 line(s) were priced only once, so they could not move
+```
+
+`.env.focused.example` is the depth configuration; `.env.all-sports.example`
+is breadth, for an account that can afford it.
 
 ## Watching every sport
 
