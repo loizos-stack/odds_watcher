@@ -148,6 +148,20 @@ def _components(config: Config):
     return store, budget, api, telegram
 
 
+def _sample_sport(api, config: Config) -> str:
+    """One real sport key to test the events endpoint with.
+
+    SPORTS=all is expanded by the watcher but is not itself a sport key, so
+    sending it here would report a working configuration as a bad slug.
+    """
+    if not config.wants_all_sports:
+        return config.sports[0]
+    rows = api.get_sports()
+    if not rows:
+        raise UnsupportedByProvider("SPORTS=all, but the provider listed no sports")
+    return rows[0][0]
+
+
 def cmd_check(config: Config) -> int:
     store, budget, api, telegram = _components(config)
     ok = True
@@ -166,27 +180,34 @@ def cmd_check(config: Config) -> int:
         print(f"✗ Telegram: {exc}", file=sys.stderr)
         _budget_hint(config, exc)
 
-    try:
-        selected = api.get_selected_bookmakers()
-        print(f"✓ odds-api.io reachable. Selected bookmakers: {selected or '(none)'}")
-        missing = [b for b in config.bookmakers if b.lower() not in selected]
-        if missing:
-            print(
-                f"! {', '.join(missing)} not selected on the account — "
-                "run `python -m odds_watcher select-bookmakers`"
-            )
-    except (TransportError, BudgetExceeded) as exc:
-        ok = False
-        print(f"✗ odds-api.io: {exc}", file=sys.stderr)
-        _budget_hint(config, exc)
+    provider = config.odds_provider
+    if getattr(api, "account_bookmaker_selection", False):
+        try:
+            selected = api.get_selected_bookmakers()
+            print(f"✓ {provider} reachable. Selected bookmakers: {selected or '(none)'}")
+            missing = [b for b in config.bookmakers if b.lower() not in selected]
+            if missing:
+                print(
+                    f"! {', '.join(missing)} not selected on the account — "
+                    "run `python -m odds_watcher select-bookmakers`"
+                )
+        except (TransportError, BudgetExceeded) as exc:
+            ok = False
+            print(f"✗ {provider}: {exc}", file=sys.stderr)
+            _budget_hint(config, exc)
+    else:
+        # Nothing is bound to the account here, so an empty selection is
+        # correct rather than a misconfiguration to warn about.
+        print(f"· {provider} chooses books per request: {', '.join(config.bookmakers)}")
 
     try:
         now = now_ts()
-        events = api.get_events(config.sports[0])
+        sport = _sample_sport(api, config)
+        events = api.get_events(sport)
         upcoming = sorted(
             (e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts
         )
-        print(f"✓ {len(events)} {config.sports[0]} event(s) returned, {len(upcoming)} still upcoming")
+        print(f"✓ {len(events)} {sport} event(s) returned, {len(upcoming)} still upcoming")
         for event in upcoming[:5]:
             print(
                 f"   · {event.name} — {format_clock(event.start_ts)} "

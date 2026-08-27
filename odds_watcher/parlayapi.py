@@ -341,6 +341,8 @@ class ParlayApiClient:
         self.default_sport = default_sport
         self.odds_format = odds_format
         self.supports_multi = True
+        # Books are chosen per request, never on the account.
+        self.account_bookmaker_selection = False
         # One /odds call returns every fixture for the sport; event ids only
         # filter the reply, so the watcher must not split them into batches.
         self.sport_scoped_odds = True

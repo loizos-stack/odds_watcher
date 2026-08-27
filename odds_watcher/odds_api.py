@@ -343,6 +343,8 @@ class OddsApiClient:
         self.timeout = timeout
         self.budget = budget
         self.supports_multi = True
+        # The free tier binds two books to the account itself.
+        self.account_bookmaker_selection = True
 
     # -- plumbing ---------------------------------------------------------
     def _call(self, path: str, params: Optional[dict] = None, *, method: str = "GET") -> Any:

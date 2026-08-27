@@ -72,6 +72,8 @@ class TheOddsApiClient:
         # Batching is inherent here: the featured endpoint covers a whole
         # sport. Kept for interface parity with the odds-api.io client.
         self.supports_multi = True
+        # Books are chosen per request, never on the account.
+        self.account_bookmaker_selection = False
 
     # -- plumbing ---------------------------------------------------------
     def _call(self, path: str, params: Optional[dict] = None, *, metered: bool = True,
