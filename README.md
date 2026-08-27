@@ -17,6 +17,34 @@ Odds: 2.00 → 1.80 (-10.0%)
 
 ## How it decides to alert
 
+### Props are the expensive half
+
+Player props come from a second endpoint: one extra request per sport per
+poll. Game markets are one request per sport however many fixtures are on, so
+props roughly double the cost of a poll — and across a wide `SPORTS` list that
+is most of the bill. Measured on a 388-sport listing at three samples per
+fixture:
+
+| | Per month |
+| --- | ---: |
+| All sports, props everywhere | 167k |
+| All sports, no props | 89k |
+| All sports, props on three named sports | 98k |
+
+`PROP_SPORTS` is the setting that makes the third row possible: game markets
+still cover every sport, and only the named ones pay for props.
+
+```bash
+SPORTS=all
+PROP_MARKETS=all
+PROP_SPORTS=baseball_mlb,americanfootball_nfl,basketball_nba
+```
+
+Leave `PROP_SPORTS` empty and props are fetched for every sport, which is the
+first row. The `cost estimate` line the watcher logs on its first poll counts
+props only where they are actually fetched, so it will say `odds, props on 2`
+rather than assuming every sport in range.
+
 ### The first signal and the ones after it
 
 `MIN_DROP_PCT` governs the *first* message about a line. After that the line

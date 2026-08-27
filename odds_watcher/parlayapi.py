@@ -334,6 +334,7 @@ class ParlayApiClient:
         timeout: int = 20,
         budget=None,
         prop_markets: Sequence[str] = (),
+        prop_sports: Sequence[str] = (),
         default_sport: str = "",
         odds_format: str = "american",
         regions: Sequence[str] = (),
@@ -348,6 +349,7 @@ class ParlayApiClient:
         self.timeout = timeout
         self.budget = budget
         self.prop_markets = tuple(prop_markets)
+        self.prop_sports = tuple(prop_sports)
         self.regions = tuple(regions)
         self.featured_markets = tuple(featured_markets)
         self.bookmakers = tuple(bookmakers)
@@ -639,6 +641,19 @@ class ParlayApiClient:
                 self._remember_keys(sport, markets)
         return payload
 
+    def wants_props(self, sport: str) -> bool:
+        """Whether to spend the second request of the poll on this sport.
+
+        Props are priced per sport per poll, so on a wide SPORTS list they
+        dominate the bill. PROP_SPORTS keeps them where they are wanted --
+        game markets still cover everything.
+        """
+        if not self.prop_markets:
+            return False
+        if not self.prop_sports:
+            return True
+        return sport in self.prop_sports
+
     def _sport_props(self, sport: str) -> Any:
         """Player props, which arrive as flat rows rather than nested markets."""
         params = {"oddsFormat": self.odds_format}
@@ -681,7 +696,7 @@ class ParlayApiClient:
             return not wanted or block_id in wanted
 
         blocks = [b for b in _as_list(self._sport_odds(sport)) if _keep(b)]
-        if self.prop_markets:
+        if self.wants_props(sport):
             try:
                 blocks.extend(b for b in _as_list(self._sport_props(sport)) if _keep(b))
             except HttpError as exc:

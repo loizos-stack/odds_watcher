@@ -545,3 +545,34 @@ def test_a_non_market_400_is_not_retried_with_fewer_markets(monkeypatch):
         client._sport_odds("baseball_mlb")
 
     assert len(calls) == 2  # the probe and one retry, not a third on core markets
+
+
+def test_props_are_fetched_only_for_the_named_sports(monkeypatch):
+    """Props are a second request per sport: on 388 sports they set the bill."""
+    asked = []
+
+    def fake(url, **kw):
+        asked.append(url)
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", featured_markets=("h2h",), prop_markets=("all",),
+                             prop_sports=("baseball_mlb",))
+
+    assert client.wants_props("baseball_mlb")
+    assert not client.wants_props("table_tennis")
+
+    client.get_odds_payloads([], (), sport="baseball_mlb")
+    client.get_odds_payloads([], (), sport="table_tennis")
+
+    props = [u for u in asked if "/props" in u]
+    assert len(props) == 1 and "baseball_mlb" in props[0]
+    # Game markets still cover every sport.
+    assert len([u for u in asked if u.endswith("/odds") or "/odds?" in u]) == 2
+
+
+def test_an_empty_prop_sports_still_means_every_sport(monkeypatch):
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers",
+                        lambda url, **kw: ([], {}))
+    client = ParlayApiClient("k", prop_markets=("all",))
+    assert client.wants_props("anything")

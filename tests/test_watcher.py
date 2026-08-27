@@ -1006,3 +1006,24 @@ def test_a_per_event_provider_still_batches(config, store):
 
     assert len(api.odds_calls) == 3  # 20 + 20 + 5
     assert watcher.estimate_poll_cost(KICKOFF - 300) == 3
+
+
+def test_the_estimate_counts_props_only_where_they_are_fetched(config, store):
+    """PROP_SPORTS is the lever that makes props affordable; the estimate must see it."""
+    import dataclasses
+
+    class Scoped(FakeApi):
+        sport_scoped_odds = True
+
+        def wants_props(self, sport):
+            return sport == "baseball_mlb"
+
+    cfg = dataclasses.replace(config, prop_markets=("all",),
+                              prop_sports=("baseball_mlb",))
+    watcher = Watcher(cfg, Scoped([], []), FakeTelegram(), store)
+    watcher._events = [
+        dataclasses.replace(EVENT, id="a", sport_key="baseball_mlb"),
+        dataclasses.replace(EVENT, id="b", sport_key="table_tennis"),
+    ]
+    # mlb: odds + props = 2, table tennis: odds only = 1.
+    assert watcher.estimate_poll_cost(KICKOFF - 300) == 3

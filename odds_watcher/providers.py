@@ -34,6 +34,7 @@ def build_client(config: Config, budget=None, market_cache=None):
             timeout=config.request_timeout_seconds,
             budget=budget,
             prop_markets=config.prop_markets,
+            prop_sports=config.prop_sports,
             default_sport=_default_sport(config),
             odds_format=config.odds_format,
             regions=config.regions,

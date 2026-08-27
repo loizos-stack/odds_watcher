@@ -251,18 +251,29 @@ class Watcher:
         refresh time, which is a separate, slower clock.
         """
         events = self.events_in_tracking_range(now)
-        per_sport = 2 if self.config.prop_markets else 1
-        if self.config.per_event_odds:
-            return len(events) * per_sport
-        if getattr(self.api, "sport_scoped_odds", False):
-            return len({event.sport_key for event in events}) * per_sport
-        requests = 0
         by_sport: dict[str, int] = defaultdict(int)
         for event in events:
             by_sport[event.sport_key] += 1
-        for count in by_sport.values():
-            requests += -(-count // EVENTS_PER_ODDS_REQUEST)
-        return requests * per_sport
+
+        total = 0
+        for sport, count in by_sport.items():
+            if self.config.per_event_odds:
+                calls = count
+            elif getattr(self.api, "sport_scoped_odds", False):
+                calls = 1
+            else:
+                calls = -(-count // EVENTS_PER_ODDS_REQUEST)
+            total += calls
+            # Props are a second request, and PROP_SPORTS may exclude this one.
+            if self._props_for(sport):
+                total += calls
+        return total
+
+    def _props_for(self, sport: str) -> bool:
+        wants = getattr(self.api, "wants_props", None)
+        if wants is not None:
+            return bool(wants(sport))
+        return bool(self.config.prop_markets)
 
     def estimate_refresh_cost(self, sports: int) -> int:
         """Requests one fixture-list refresh costs: every sport, every league."""
@@ -285,13 +296,15 @@ class Watcher:
         odds_per_hour = per_poll * polls_per_hour
         refresh_per_hour = per_refresh * refreshes_per_hour
         per_hour = int(odds_per_hour + refresh_per_hour)
+        in_range = {event.sport_key for event in self.events_in_tracking_range(now)}
+        with_props = sum(1 for sport in in_range if self._props_for(sport))
         log.info(
             "cost estimate: %d request(s) per poll (%s, %d sport(s) in range) every %ds "
             "= ~%d/hour, plus %d per fixture refresh (%d sport(s)) every %ds = ~%d/hour; "
             "~%d request(s)/hour in total",
             per_poll,
-            "odds + props" if cfg.prop_markets else "odds",
-            per_poll // (2 if cfg.prop_markets else 1),
+            f"odds, props on {with_props}" if with_props else "odds",
+            len(in_range),
             cfg.poll_interval_seconds,
             int(odds_per_hour),
             per_refresh,

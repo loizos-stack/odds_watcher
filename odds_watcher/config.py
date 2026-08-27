@@ -147,6 +147,10 @@ class Config:
     regions: tuple = ("us",)
     featured_markets: tuple = ("h2h", "spreads", "totals")
     prop_markets: tuple = ()
+    # Which sports get player props. Empty means all of them. Props cost a
+    # second request per sport per poll, so on a wide SPORTS list this is the
+    # setting that decides whether props are affordable at all.
+    prop_sports: tuple[str, ...] = ()
     # How long a discovered market-key set stays usable before it is re-probed.
     market_keys_ttl_seconds: int = 86400
     the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
@@ -305,6 +309,7 @@ class Config:
             # would silently ask for none and be billed as one credit anyway.
             featured_markets=_csv(env.get("FEATURED_MARKETS", "")) or ("h2h", "spreads", "totals"),
             prop_markets=_csv(env.get("PROP_MARKETS", "")),
+            prop_sports=_csv(env.get("PROP_SPORTS", "")),
             market_keys_ttl_seconds=_get_int(env, "MARKET_KEYS_TTL_SECONDS", 86400, minimum=600),
             odds_format=env.get("ODDS_FORMAT", "american").strip().lower(),
             parlay_api_base_url=env.get(
