@@ -32,6 +32,8 @@ class Alert:
     drop_pct: float
     seconds_to_start: float
     repeat: bool = False
+    reference_ts: float = 0.0
+    observed_ts: float = 0.0
 
     @property
     def is_repeat(self) -> bool:
@@ -175,8 +177,13 @@ class DropDetector:
                 continue
 
             reference = state.last_odds if last_seen_mode else state.reference_odds
+            reference_ts = state.last_ts if last_seen_mode else state.reference_ts
             change = measure_drop(reference, quote.odds, cfg.drop_metric)
-            if change < cfg.min_drop_pct:
+            # The first signal has to clear MIN_DROP_PCT. After that the line
+            # is known to be moving, and the fact that it is STILL moving is
+            # the information -- so any further shortening is reported.
+            threshold = cfg.min_drop_pct if state.alert_count == 0 else cfg.follow_up_drop_pct
+            if change <= 0 or change < threshold:
                 continue
 
             alerts.append(
@@ -187,6 +194,8 @@ class DropDetector:
                     drop_pct=change,
                     seconds_to_start=seconds,
                     repeat=state.alert_count > 0,
+                    reference_ts=reference_ts,
+                    observed_ts=quote.updated_ts or now,
                 )
             )
             log.info(

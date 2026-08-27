@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
+from zoneinfo import ZoneInfo
 
 
 DEFAULT_BOOKMAKERS = ("Bet365", "DraftKings")
@@ -116,6 +117,12 @@ class Config:
     # percentage of the American price (-110 to -121 is "10%"); the same
     # move is 4.33% in decimal, so the choice changes what fires by 2x.
     drop_metric: str = "decimal"
+    # Once a line has signalled, the interest is in whether it KEEPS moving,
+    # so any further shortening is worth saying. 0.0 means "any drop at all".
+    follow_up_drop_pct: float = 0.0
+    # IANA zone for timestamps in messages. Kick-off times are the thing being
+    # reasoned about, and reading them in another zone invites a real mistake.
+    display_timezone: str = "UTC"
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
     # Ceiling on messages from one poll. With every market and player prop
@@ -212,6 +219,16 @@ class Config:
                 f"'parlay-api', got {provider!r}"
             )
 
+        follow_up = _get_float(env, "FOLLOW_UP_DROP_PCT", 0.0, minimum=0.0)
+        display_timezone = env.get("DISPLAY_TIMEZONE", "UTC").strip() or "UTC"
+        try:
+            ZoneInfo(display_timezone)
+        except Exception as exc:  # unknown zone, or no tzdata on the host
+            raise ConfigError(
+                f"DISPLAY_TIMEZONE={display_timezone!r} is not a zone this "
+                f"system knows ({exc}). Use an IANA name such as Asia/Nicosia, "
+                "or UTC."
+            ) from exc
         drop_metric = env.get("DROP_METRIC", "decimal").strip().lower()
         if drop_metric not in ("decimal", "american"):
             raise ConfigError(
@@ -272,6 +289,8 @@ class Config:
             min_drop_pct=_get_float(env, "MIN_DROP_PCT", 2.0, minimum=0.1),
             baseline_mode=baseline_mode,
             drop_metric=drop_metric,
+            follow_up_drop_pct=follow_up,
+            display_timezone=display_timezone,
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
             poll_interval_seconds=poll_interval,

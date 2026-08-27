@@ -17,6 +17,18 @@ Odds: 2.00 → 1.80 (-10.0%)
 
 ## How it decides to alert
 
+### The first signal and the ones after it
+
+`MIN_DROP_PCT` governs the *first* message about a line. After that the line
+is known to be moving, and the useful information is whether it has stopped —
+so any further shortening is reported, measured from the price that last
+signalled. `FOLLOW_UP_DROP_PCT` (default `0.0`, meaning any drop) raises that
+bar again if the follow-ups turn into noise.
+
+A line at -110 that goes to -121 and then -123 sends two messages: one at
+10.0%, one at 1.65%. A line that goes flat, or drifts back out, sends nothing
+— "any drop" is not "no drop".
+
 ### Which scale the threshold is measured on
 
 `MIN_DROP_PCT` means something different depending on `DROP_METRIC`, and the

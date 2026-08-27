@@ -8,7 +8,7 @@ from typing import Optional
 
 from .detector import Alert
 from .http import TransportError, build_url, request_json
-from .util import format_clock, format_countdown
+from .util import format_clock, format_countdown, format_time
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def format_price(decimal_odds: float, odds_format: str = "decimal") -> str:
     return f"{american:+.0f}"
 
 
-def format_alert(alert: Alert, odds_format: str = "decimal") -> str:
+def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") -> str:
     """Render one drop as a Telegram HTML message."""
     quote = alert.quote
     event = alert.event
@@ -116,20 +116,25 @@ def format_alert(alert: Alert, odds_format: str = "decimal") -> str:
     market = " ".join(part for part in (quote.market, quote.line) if part)
     lines += [
         f"Kick-off in <b>{format_countdown(alert.seconds_to_start)}</b> "
-        f"({_esc(format_clock(event.start_ts))})",
+        f"({_esc(format_clock(event.start_ts, tz))})",
         "",
         f"Market: <b>{_esc(market)}</b> — <b>{_esc(outcome_label(quote, event))}</b>",
-        f"Odds: <s>{_esc(format_price(alert.reference_odds, odds_format))}</s> → "
-        f"<b>{_esc(format_price(quote.odds, odds_format))}</b> "
-        f"(<b>-{alert.drop_pct:.1f}%</b>)",
+        "",
+        # Both prices are stamped: which two observations produced this number
+        # is the first thing anyone checks before acting on it.
+        f"Was:  <s>{_esc(format_price(alert.reference_odds, odds_format))}</s>  "
+        f"<i>at {_esc(format_time(alert.reference_ts, tz))}</i>",
+        f"Now:  <b>{_esc(format_price(quote.odds, odds_format))}</b>  "
+        f"<i>at {_esc(format_time(alert.observed_ts, tz))}</i>",
+        f"Drop: <b>{alert.drop_pct:.2f}%</b>",
     ]
     return "\n".join(lines)
 
 
-def format_digest(alerts: list, odds_format: str = "decimal") -> str:
+def format_digest(alerts: list, odds_format: str = "decimal", tz: str = "UTC") -> str:
     """One message covering several drops found in the same poll."""
     if len(alerts) == 1:
-        return format_alert(alerts[0], odds_format)
-    blocks = [format_alert(alert, odds_format) for alert in alerts]
+        return format_alert(alerts[0], odds_format, tz)
+    blocks = [format_alert(alert, odds_format, tz) for alert in alerts]
     separator = "\n\n" + "—" * 12 + "\n\n"
     return separator.join(blocks)

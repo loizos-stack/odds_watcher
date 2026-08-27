@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 
@@ -47,9 +48,23 @@ def parse_timestamp(value: Any) -> Optional[float]:
     return None
 
 
-def format_clock(ts: float) -> str:
-    """UTC wall clock, for message bodies and logs."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+def format_clock(ts: float, tz: str = "UTC") -> str:
+    """Wall clock in the reader's zone, for message bodies and logs."""
+    return datetime.fromtimestamp(ts, tz=_zone(tz)).strftime("%Y-%m-%d %H:%M %Z")
+
+
+def format_time(ts: float, tz: str = "UTC") -> str:
+    """Just the time of day, to the second: prices move within a minute."""
+    return datetime.fromtimestamp(ts, tz=_zone(tz)).strftime("%H:%M:%S %Z")
+
+
+def _zone(name: str):
+    if not name or name.upper() == "UTC":
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except Exception:  # a message is worth more in UTC than not at all
+        return timezone.utc
 
 
 def format_countdown(seconds: float) -> str:

@@ -29,7 +29,7 @@ def test_format_alert_contains_the_essentials():
     assert "BET365" in text
     assert "Ajax &lt;A&gt; vs PSV" in text  # user data is HTML-escaped
     assert "5m 04s" in text
-    assert "2.00" in text and "1.80" in text and "-10.0%" in text
+    assert "2.00" in text and "1.80" in text and "Drop: <b>10.00%</b>" in text
 
 
 def test_alert_names_the_team_not_the_side():

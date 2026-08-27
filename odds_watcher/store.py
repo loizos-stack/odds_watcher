@@ -83,11 +83,16 @@ class LineState:
     def reference_odds(self) -> float:
         """Price a new drop is measured against.
 
-        After an alert we re-baseline to the alerted price, so a line that keeps
-        sliding produces a second alert only once it drops another full
-        threshold rather than on every poll.
+        After an alert we re-baseline to the alerted price, so a line that
+        keeps sliding is reported as each new step down rather than as an
+        ever-growing total from where it started.
         """
         return self.alert_odds if self.alert_odds else self.baseline_odds
+
+    @property
+    def reference_ts(self) -> float:
+        """When the reference price was recorded, to report alongside it."""
+        return self.alert_ts if self.alert_odds else self.baseline_ts
 
 
 class Store:

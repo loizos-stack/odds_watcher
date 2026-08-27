@@ -77,14 +77,48 @@ def test_event_first_seen_inside_window_never_alerts(config, store):
     assert detector.process(EVENT, [quote(1.50)], at(3)) == []
 
 
-def test_repeat_alert_requires_another_full_threshold(config, store):
+def test_a_line_that_keeps_sliding_reports_every_further_step(config, store):
+    """Once a line has signalled, that it is STILL moving is the information.
+
+    The first message has to clear MIN_DROP_PCT. After that the question is no
+    longer "is this a big move" but "has it stopped", so any further
+    shortening is reported, measured from the price that last signalled.
+    """
     detector = DropDetector(config, store)
     detector.process(EVENT, [quote(2.00)], at(20))
     first = detector.process(EVENT, [quote(1.80)], at(8))
     store.mark_alerted(first[0].quote, ts=at(8))
 
-    # A further 2% slide is not enough for a second message.
-    assert detector.process(EVENT, [quote(1.76)], at(6)) == []
+    second = detector.process(EVENT, [quote(1.76)], at(6))
+    assert len(second) == 1
+    assert second[0].is_repeat
+    assert second[0].reference_odds == 1.80          # from the alerted price
+    assert second[0].drop_pct == pytest.approx(2.22, abs=0.01)
+
+
+def test_a_follow_up_still_needs_the_price_to_have_moved(config, store):
+    """"Any drop" is not "no drop": an unchanged price says nothing new."""
+    detector = DropDetector(config, store)
+    detector.process(EVENT, [quote(2.00)], at(20))
+    first = detector.process(EVENT, [quote(1.80)], at(8))
+    store.mark_alerted(first[0].quote, ts=at(8))
+
+    assert detector.process(EVENT, [quote(1.80)], at(6)) == []   # flat
+    assert detector.process(EVENT, [quote(1.85)], at(4)) == []   # drifted out
+
+
+def test_a_follow_up_floor_can_be_set(config, store):
+    """FOLLOW_UP_DROP_PCT raises the bar again if the follow-ups are noise."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, follow_up_drop_pct=5.0)
+    detector = DropDetector(cfg, store)
+    detector.process(EVENT, [quote(2.00)], at(20))
+    first = detector.process(EVENT, [quote(1.80)], at(8))
+    store.mark_alerted(first[0].quote, ts=at(8))
+
+    assert detector.process(EVENT, [quote(1.76)], at(6)) == []      # 2.2%, below
+    assert len(detector.process(EVENT, [quote(1.70)], at(4))) == 1  # 5.6%, above
 
     second = detector.process(EVENT, [quote(1.70)], at(4))
     assert len(second) == 1
@@ -493,5 +527,8 @@ def test_the_alert_reads_in_american(cole_config, store):
         event, [dataclasses.replace(opening, odds=_american(-121))], T_0201)[0]
 
     text = format_alert(alert, "american")
-    assert "-110" in text and "-121" in text
-    assert "-10.0%" in text
+    # Both prices in American, both stamped, and the percentage spelled out.
+    assert "Was:  <s>-110</s>" in text
+    assert "Now:  <b>-121</b>" in text
+    assert "Drop: <b>10.0" in text
+    assert text.count("at ") >= 2

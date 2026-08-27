@@ -68,7 +68,7 @@ def test_full_cycle_sends_one_alert(config, store):
     assert len(alerts) == 1
     assert len(telegram.sent) == 1
     body = telegram.sent[0]
-    assert "Ajax vs PSV" in body and "BET365" in body and "-10.0%" in body
+    assert "Ajax vs PSV" in body and "BET365" in body and "Drop: <b>10.00%</b>" in body
 
 
 def test_events_are_only_refetched_when_stale(config, store):

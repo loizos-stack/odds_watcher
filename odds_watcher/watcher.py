@@ -219,7 +219,7 @@ class Watcher:
         """Send alerts to Telegram, marking each one only once it is delivered."""
         for group in chunked(alerts, ALERTS_PER_MESSAGE):
             try:
-                self.telegram.send_message(format_digest(list(group), self.config.odds_format))
+                self.telegram.send_message(format_digest(list(group), self.config.odds_format, self.config.display_timezone))
             except TransportError:
                 log.error("could not deliver %d alert(s); will retry next poll", len(group))
                 continue
