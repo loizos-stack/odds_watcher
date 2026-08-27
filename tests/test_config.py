@@ -1,3 +1,5 @@
+import pathlib
+
 import pytest
 
 from odds_watcher.config import Config, ConfigError, load_dotenv
@@ -275,3 +277,36 @@ def test_logging_goes_to_stdout(monkeypatch):
     streams = [getattr(h, "stream", None) for h in logging.root.handlers]
     assert sys.stdout in streams
     assert sys.stderr not in streams
+
+
+def _env_from_example(path):
+    """The key=value pairs a shipped .env example would set."""
+    env = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        env[key.strip()] = value.strip()
+    return env
+
+
+@pytest.mark.parametrize(
+    "example",
+    sorted(pathlib.Path(__file__).resolve().parents[1].glob(".env*.example")),
+    ids=lambda p: p.name,
+)
+def test_every_shipped_example_actually_loads(example):
+    """A preset that fails validation is worse than no preset at all.
+
+    These files are copied verbatim onto a server and are the first thing a
+    new install runs, so a setting that contradicts another one surfaces as a
+    startup error on a box the author cannot see.
+    """
+    env = _env_from_example(example)
+    env.update(
+        ODDS_API_KEY="key",
+        TELEGRAM_BOT_TOKEN="token",
+        TELEGRAM_CHAT_ID="42",
+    )
+    Config.from_env(env)  # raises ConfigError if the settings contradict
