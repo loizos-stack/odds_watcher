@@ -310,3 +310,24 @@ def test_every_shipped_example_actually_loads(example):
         TELEGRAM_CHAT_ID="42",
     )
     Config.from_env(env)  # raises ConfigError if the settings contradict
+
+
+def test_the_missing_credential_hint_does_not_advise_overwriting_the_file(tmp_path):
+    """"Copy .env.example to .env" is how a working .env gets destroyed."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("ODDS_API_KEY=\nTELEGRAM_BOT_TOKEN=\nTELEGRAM_CHAT_ID=\n")
+    (tmp_path / ".env.bak").write_text("ODDS_API_KEY=old\n")
+
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env({}, env_file=env_file)
+
+    message = str(exc.value)
+    assert "Copy .env.example" not in message
+    assert "edit it in place" in message
+    assert ".env.bak" in message
+
+
+def test_a_missing_env_file_points_at_the_preset_command(tmp_path):
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env({}, env_file=tmp_path / ".env")
+    assert "preset --source" in str(exc.value)

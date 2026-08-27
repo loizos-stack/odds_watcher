@@ -199,6 +199,7 @@ class Config:
         env: Optional[dict] = None,
         *,
         required: Sequence[str] = ALL_CREDENTIALS,
+        env_file: Optional[Path] = None,
     ) -> "Config":
         """Build a config from the environment.
 
@@ -209,7 +210,18 @@ class Config:
 
         missing = [name for name in required if not env.get(name)]
         if missing:
-            hint = "Copy .env.example to .env and fill it in."
+            # "Copy .env.example to .env" is the wrong advice when a .env is
+            # already there with the value blank -- it invites overwriting the
+            # file again, which is how the value went missing the first time.
+            hint = "Set them in your .env."
+            if env_file is not None and Path(env_file).is_file():
+                hint = f"They are present but empty in {env_file}; edit it in place."
+                backup = Path(str(env_file) + ".bak")
+                if backup.is_file():
+                    hint += f" The previous version is {backup}."
+            elif env_file is not None:
+                hint = (f"There is no {env_file}. Start from a preset: "
+                        "`odds_watcher preset --source .env.example`.")
             if missing == ["TELEGRAM_CHAT_ID"]:
                 hint = "Message your bot in Telegram, then run `chat-id` to discover it."
             raise ConfigError(

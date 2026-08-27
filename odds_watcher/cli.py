@@ -1395,7 +1395,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_preset(Path(args.source), Path(args.env_file))
     load_dotenv(Path(args.env_file))
     try:
-        config = Config.from_env(required=REQUIRED_CREDENTIALS.get(args.command, ALL_CREDENTIALS))
+        config = Config.from_env(
+            required=REQUIRED_CREDENTIALS.get(args.command, ALL_CREDENTIALS),
+            env_file=Path(args.env_file),
+        )
     except ConfigError as exc:
         setup_logging(args.log_level or "INFO")
         print(f"Configuration error: {exc}", file=sys.stderr)

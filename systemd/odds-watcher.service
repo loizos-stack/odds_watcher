@@ -11,6 +11,9 @@ EnvironmentFile=/opt/odds_watcher/.env
 ExecStart=/usr/bin/python3 -m odds_watcher run
 Restart=always
 RestartSec=15
+# Exit 2 is a configuration error. Restarting cannot fix it, and looping
+# buries the one line that says what is wrong.
+RestartPreventExitStatus=2
 # The database is the only state; everything else can be read-only.
 # ProtectSystem=strict makes /opt read-only, so the .env must set
 #   DB_PATH=/var/lib/odds-watcher/odds_watcher.db
