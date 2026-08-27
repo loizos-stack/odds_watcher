@@ -109,6 +109,13 @@ class LineState:
         return self.alert_ts if self.alert_odds else self.baseline_ts
 
 
+# Bumped whenever a provider change alters what a stored fixture MEANS --
+# most importantly which identifier its `id` holds. A cached list written
+# under the old meaning cannot be matched against freshly parsed prices, and
+# is discarded rather than silently mis-joined.
+FIXTURE_CACHE_VERSION = "2"
+
+
 class Store:
     def __init__(self, path: Path | str):
         self.path = str(path)
@@ -297,7 +304,8 @@ class Store:
             "INSERT INTO meta (key, value) VALUES (?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             [("fixtures_fetched_at", repr(float(now))),
-             ("fixtures_partial", "1" if partial else "0")],
+             ("fixtures_partial", "1" if partial else "0"),
+             ("fixtures_version", FIXTURE_CACHE_VERSION)],
         )
         self.conn.commit()
 
@@ -315,6 +323,14 @@ class Store:
             row["key"]: row["value"]
             for row in self.conn.execute("SELECT key, value FROM meta")
         }
+        if meta.get("fixtures_version") != FIXTURE_CACHE_VERSION:
+            # Written before the identifiers changed meaning: matching prices
+            # against it would discard every one of them.
+            log.warning(
+                "cached fixture list was written by an older parser; "
+                "re-fetching rather than matching prices against stale ids"
+            )
+            return [], 0.0, False
         try:
             fetched_at = float(meta.get("fixtures_fetched_at", "0"))
         except ValueError:

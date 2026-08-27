@@ -294,3 +294,37 @@ def test_the_samples_column_is_added_to_an_older_database(tmp_path):
     store = Store(path)
     assert store.movement_summary()["seen_once"] == 1  # defaulted, and readable
     store.close()
+
+
+def test_a_fixture_cache_from_an_older_parser_is_discarded(tmp_path):
+    """Stale ids cannot be matched against freshly parsed prices."""
+    from odds_watcher.odds_api import Event
+    from odds_watcher import store as store_module
+
+    path = tmp_path / "stale.db"
+    s = Store(path)
+    s.save_fixtures([Event(id="old-style-id", start_ts=9e9, home="A", away="B")],
+                    1000.0, partial=False)
+    s.conn.execute("UPDATE meta SET value='1' WHERE key='fixtures_version'")
+    s.conn.commit()
+    s.close()
+
+    s2 = Store(path)
+    events, fetched_at, partial = s2.load_fixtures()
+    assert events == [] and fetched_at == 0.0 and partial is False
+    s2.close()
+
+
+def test_a_current_fixture_cache_is_kept(tmp_path):
+    from odds_watcher.odds_api import Event
+
+    path = tmp_path / "fresh.db"
+    s = Store(path)
+    s.save_fixtures([Event(id="e1", start_ts=9e9, home="A", away="B")],
+                    1000.0, partial=False)
+    s.close()
+
+    s2 = Store(path)
+    events, fetched_at, _ = s2.load_fixtures()
+    assert [e.id for e in events] == ["e1"] and fetched_at == 1000.0
+    s2.close()
