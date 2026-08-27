@@ -182,3 +182,84 @@ def test_verify_calls_out_an_empty_first_pass(config, wired, capsys):
     assert rc == 1
     assert "returned no prices at all" in err
     assert "comes back empty, not as an error" in err
+
+
+# --- applying a preset must never destroy what is already configured -------
+
+PRESET = """# a preset
+ODDS_PROVIDER=parlay-api
+SPORTS=baseball_mlb
+MIN_DROP_PCT=10.0
+
+ODDS_API_KEY=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+"""
+
+
+def test_preset_carries_over_the_existing_secrets(tmp_path, capsys):
+    """Copying a preset over a working .env is how the credentials got lost."""
+    env = tmp_path / ".env"
+    env.write_text("ODDS_API_KEY=secret-key\nTELEGRAM_BOT_TOKEN=tok\n"
+                   "TELEGRAM_CHAT_ID=42\nSPORTS=soccer_epl\n")
+    source = tmp_path / ".env.mlb.example"
+    source.write_text(PRESET)
+
+    rc = cli.cmd_preset(source, env)
+
+    written = cli._read_env_file(env)
+    assert rc == 0
+    assert written["ODDS_API_KEY"] == "secret-key"
+    assert written["TELEGRAM_BOT_TOKEN"] == "tok"
+    assert written["TELEGRAM_CHAT_ID"] == "42"
+    assert written["SPORTS"] == "baseball_mlb"      # the preset's value wins
+    out = capsys.readouterr().out
+    assert "carried over 3 existing value(s)" in out
+    assert "secret-key" not in out                  # never printed
+
+
+def test_preset_keeps_a_backup(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("ODDS_API_KEY=secret-key\n")
+    source = tmp_path / "p.example"
+    source.write_text(PRESET)
+
+    cli.cmd_preset(source, env)
+
+    backup = tmp_path / ".env.bak"
+    assert "ODDS_API_KEY=secret-key" in backup.read_text()
+    assert oct(backup.stat().st_mode)[-3:] == "600"
+    assert oct(env.stat().st_mode)[-3:] == "600"
+
+
+def test_preset_does_not_silently_drop_unmentioned_settings(tmp_path, capsys):
+    env = tmp_path / ".env"
+    env.write_text("ODDS_API_KEY=k\nTELEGRAM_BOT_TOKEN=t\nTELEGRAM_CHAT_ID=1\n"
+                   "PARLAY_API_BASE_URL=https://example.test\n")
+    source = tmp_path / "p.example"
+    source.write_text(PRESET)
+
+    cli.cmd_preset(source, env)
+
+    written = cli._read_env_file(env)
+    assert written["PARLAY_API_BASE_URL"] == "https://example.test"
+    assert "does not mention" in capsys.readouterr().out
+
+
+def test_preset_reports_what_is_still_missing(tmp_path, capsys):
+    env = tmp_path / ".env"
+    source = tmp_path / "p.example"
+    source.write_text(PRESET)
+
+    rc = cli.cmd_preset(source, env)
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "still to fill in" in err
+    assert "ODDS_API_KEY" in err
+
+
+def test_preset_refuses_a_missing_source(tmp_path, capsys):
+    rc = cli.cmd_preset(tmp_path / "nope.example", tmp_path / ".env")
+    assert rc == 2
+    assert "no such preset" in capsys.readouterr().err

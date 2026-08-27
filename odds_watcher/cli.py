@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,7 @@ REQUIRED_CREDENTIALS = {
     "usage": ("ODDS_API_KEY",),
     "movements": (),
     "verify": ("ODDS_API_KEY",),
+    "preset": (),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -59,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "verify", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "verify", "preset", "chat-id", "status"],
     )
     parser.add_argument(
         "--sport",
@@ -88,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-balance",
         action="store_true",
         help="usage: query the provider's remaining allowance (costs one request)",
+    )
+    parser.add_argument(
+        "--source",
+        default=None,
+        help="preset: the .env*.example to apply, keeping the values already set",
     )
     parser.add_argument(
         "--wait",
@@ -791,6 +798,82 @@ def _snapshot(api, ids: list, config: Config, sport: str) -> dict:
     }
 
 
+def _read_env_file(path: Path) -> dict:
+    """The key=value pairs already in a .env, comments and blanks ignored."""
+    values: dict = {}
+    if not path.is_file():
+        return values
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def cmd_preset(source: Path, target: Path) -> int:
+    """Apply a preset to .env, carrying over the values already set in it.
+
+    Copying a preset over a working .env destroys the credentials in it, and
+    the tool then reports them as missing rather than as deleted. Presets ship
+    with empty secrets by design, so this fills each empty setting from the
+    file being replaced, keeps a backup, and never prints a secret.
+    """
+    if not source.is_file():
+        print(f"no such preset: {source}", file=sys.stderr)
+        return 2
+
+    existing = _read_env_file(target)
+    lines: list[str] = []
+    carried: list[str] = []
+    named: set = set()
+
+    for raw in source.read_text(encoding="utf-8").splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            lines.append(raw)
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        named.add(key)
+        if not value.strip() and existing.get(key):
+            lines.append(f"{key}={existing[key]}")
+            carried.append(key)
+        else:
+            lines.append(raw)
+
+    # A setting the old file had and the preset does not mention would be
+    # silently dropped; keep it rather than lose it without saying so.
+    orphans = [k for k in existing if k not in named and existing[k]]
+    if orphans:
+        lines += ["", "# Carried over from the previous .env; not part of this preset."]
+        lines += [f"{k}={existing[k]}" for k in orphans]
+
+    if target.is_file():
+        backup = target.with_suffix(target.suffix + ".bak")
+        backup.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+        os.chmod(backup, 0o600)
+        print(f"previous {target} saved as {backup}")
+
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(target, 0o600)
+
+    print(f"applied {source} to {target}")
+    if carried:
+        print(f"carried over {len(carried)} existing value(s): {', '.join(carried)}")
+    if orphans:
+        print(f"kept {len(orphans)} setting(s) the preset does not mention: "
+              f"{', '.join(orphans)}")
+
+    blank = [k for k in ALL_CREDENTIALS if not _read_env_file(target).get(k)]
+    if blank:
+        print(f"\n! still to fill in: {', '.join(blank)}", file=sys.stderr)
+        return 1
+    print("\nall credentials present — run `check` next")
+    return 0
+
+
 def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = False) -> int:
     store, budget, _, _ = _components(config)
     if reset:
@@ -1301,6 +1384,15 @@ def _report(alerts: list[Alert]) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     force_utf8_output()
+    if args.command == "preset":
+        # Deliberately before Config: the reason to run this is that .env is
+        # not yet valid.
+        setup_logging(args.log_level or "INFO")
+        if not args.source:
+            print("preset needs --source, e.g. --source .env.mlb.example",
+                  file=sys.stderr)
+            return 2
+        return cmd_preset(Path(args.source), Path(args.env_file))
     load_dotenv(Path(args.env_file))
     try:
         config = Config.from_env(required=REQUIRED_CREDENTIALS.get(args.command, ALL_CREDENTIALS))

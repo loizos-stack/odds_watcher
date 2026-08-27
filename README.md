@@ -187,6 +187,26 @@ and consider raising `POLL_INTERVAL_SECONDS` or narrowing `LEAGUES`.
 
 ## Deployment
 
+**Changing configuration** — never copy a preset over a working `.env`; that
+destroys the credentials in it, and the tool then reports them as *missing*
+rather than as deleted. Use:
+
+```bash
+python -m odds_watcher preset --source .env.mlb.example
+```
+
+which writes the preset, fills every empty setting from the file it replaces,
+keeps any setting the preset does not mention, saves the old file as
+`.env.bak`, and prints what it carried over without printing a secret.
+
+If a `.env` has already been overwritten while the service is still running,
+the values are still in the running process and can be read back:
+
+```bash
+tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value odds-watcher)/environ \
+  | grep -E '^(ODDS_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID)='
+```
+
 **A VPS** — the useful shape for this, since a laptop that sleeps misses
 kick-offs. Any 1 GB box will do; the watcher is stdlib-only, so there is
 nothing to install but Python.
