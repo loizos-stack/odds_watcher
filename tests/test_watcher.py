@@ -1139,3 +1139,38 @@ def test_an_incomplete_list_is_not_left_broken_for_a_whole_idle_interval(config,
 
     watcher._events_partial = True
     assert watcher.seconds_until_next_poll(KICKOFF) == PARTIAL_REFRESH_RETRY_SECONDS
+
+
+def test_every_poll_says_what_it_looked_at(config, store, caplog):
+    """A silent poll makes a working watcher indistinguishable from a stuck one."""
+    import logging
+
+    api = FakeApi([EVENT], [[quote(2.00)]])
+    watcher = Watcher(config, api, FakeTelegram(), store)
+    with caplog.at_level(logging.INFO):
+        watcher.poll_once(at(20))
+
+    assert "polled 1 sport(s), 1 fixture(s): 1 price(s)" in caplog.text
+    assert "1 line(s) tracked" in caplog.text
+    assert "0 drop(s) >= 5.0%" in caplog.text
+
+
+def test_fixtures_in_range_with_no_prices_is_called_out(config, store, caplog):
+    """An empty payload is what a wrong book or market key looks like."""
+    import logging
+
+    watcher = Watcher(config, FakeApi([EVENT], [[]]), FakeTelegram(), store)
+    with caplog.at_level(logging.WARNING):
+        watcher.poll_once(at(20))
+
+    assert "no prices came back" in caplog.text
+    assert "not an error" in caplog.text
+
+
+def test_a_poll_with_nothing_in_range_stays_quiet(config, store, caplog):
+    import logging
+
+    watcher = Watcher(config, FakeApi([FAR_EVENT], []), FakeTelegram(), store)
+    with caplog.at_level(logging.INFO):
+        watcher.poll_once(at(600))
+    assert "polled" not in caplog.text

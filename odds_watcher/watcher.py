@@ -227,6 +227,27 @@ class Watcher:
         if alerts:
             self.dispatch(self.rank_and_cap(alerts), now)
 
+        # A poll that finds nothing logs nothing, so a healthy watcher and a
+        # stuck one read the same in the journal. Say what was looked at.
+        priced = sum(len(q) for q in quotes_by_event.values())
+        log.info(
+            "polled %d sport(s), %d fixture(s): %d price(s), %d line(s) tracked, "
+            "%d drop(s) >= %.1f%%",
+            len(by_sport),
+            len(events),
+            priced,
+            self.store.tracked_lines(),
+            len(alerts),
+            self.config.min_drop_pct,
+        )
+        if events and not priced:
+            log.warning(
+                "no prices came back for %d fixture(s) in range — check BOOKMAKERS "
+                "and FEATURED_MARKETS: a key the provider does not price returns "
+                "an empty payload, not an error",
+                len(events),
+            )
+
         self.store.purge(now - STATE_RETENTION_SECONDS)
         return alerts
 
