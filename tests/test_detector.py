@@ -1,5 +1,7 @@
 """Behaviour of the drop rule: only in-window drops, measured pre-window."""
 
+import dataclasses
+
 import pytest
 
 from odds_watcher.detector import DropDetector, drop_pct, market_allowed
@@ -354,3 +356,142 @@ def test_last_seen_ignores_a_slow_grind(config, store):
     for index, price in enumerate(prices):
         signals += detector.process(EVENT, [quote(price)], at(9 - index))
     assert signals == []   # each step is about 3%, the total is 13.5%
+
+
+# --- the specification, as the user stated it -----------------------------
+#
+# Yankees host the Astros at 02:05. From 01:44 we record every market at
+# bet365 and fanduel. A drop of over 10% from the 01:44 price, at any point
+# between then and kick-off, is a notification. Gerrit Cole over 5.5
+# strikeouts opens -110 and is -121 at 02:01: that is a 10% drop and must
+# alert.
+
+KICKOFF_0205 = 1_700_000_000.0
+T_0144 = KICKOFF_0205 - 21 * 60
+T_0201 = KICKOFF_0205 - 4 * 60
+
+
+def _american(price: float) -> float:
+    """The decimal price the API would hand us for an American one."""
+    return round(1 + 100 / abs(price), 4) if price < 0 else round(1 + price / 100, 4)
+
+
+@pytest.fixture
+def cole_config(config, tmp_path):
+    import dataclasses
+
+    return dataclasses.replace(
+        config,
+        bookmakers=("bet365", "fanduel"),
+        sports=("baseball_mlb",),
+        baseline_mode="first-seen",
+        baseline_lead_seconds=1260,      # 01:44, twenty-one minutes out
+        window_start_seconds=600,
+        window_end_seconds=0,
+        poll_interval_seconds=120,
+        min_drop_pct=10.0,
+        drop_metric="american",
+        min_odds=1.05,
+        db_path=tmp_path / "cole.db",
+    )
+
+
+def test_the_cole_strikeouts_example_alerts(cole_config, store):
+    """-110 at 01:44 to -121 at 02:01 is the 10% drop the user asked for."""
+    detector = DropDetector(cole_config, store)
+    event = Event(id="nyy", start_ts=KICKOFF_0205, home="Yankees", away="Astros",
+                  sport="baseball", league="MLB")
+    opening = Quote("nyy", "bet365", "pitcher_strikeouts", "5.5",
+                    "Gerrit Cole Over", _american(-110))
+
+    assert detector.process(event, [opening], T_0144) == []      # baseline only
+
+    shortened = dataclasses.replace(opening, odds=_american(-121))
+    alerts = detector.process(event, [shortened], T_0201)
+
+    assert len(alerts) == 1
+    assert alerts[0].drop_pct == pytest.approx(10.0, abs=0.05)
+    assert alerts[0].reference_odds == pytest.approx(1.9091, abs=0.001)
+
+
+def test_the_same_move_is_below_threshold_in_decimal(cole_config, store):
+    """Why nothing ever fired: 10% American is 4.33% decimal."""
+    import dataclasses
+
+    cfg = dataclasses.replace(cole_config, drop_metric="decimal")
+    detector = DropDetector(cfg, store)
+    event = Event(id="nyy", start_ts=KICKOFF_0205, home="Yankees", away="Astros")
+    opening = Quote("nyy", "bet365", "pitcher_strikeouts", "5.5",
+                    "Gerrit Cole Over", _american(-110))
+
+    detector.process(event, [opening], T_0144)
+    shortened = dataclasses.replace(opening, odds=_american(-121))
+    assert detector.process(event, [shortened], T_0201) == []
+
+
+def test_a_price_that_drifts_out_never_alerts(cole_config, store):
+    """-121 to -110 is the move going the other way."""
+    import dataclasses
+
+    detector = DropDetector(cole_config, store)
+    event = Event(id="nyy", start_ts=KICKOFF_0205, home="Yankees", away="Astros")
+    opening = Quote("nyy", "bet365", "pitcher_strikeouts", "5.5",
+                    "Gerrit Cole Over", _american(-121))
+
+    detector.process(event, [opening], T_0144)
+    drifted = dataclasses.replace(opening, odds=_american(-110))
+    assert detector.process(event, [drifted], T_0201) == []
+
+
+def test_a_second_drop_alerts_again(cole_config, store):
+    """"multiple price drops" -- each further 10% is its own notification."""
+    import dataclasses
+
+    detector = DropDetector(cole_config, store)
+    event = Event(id="nyy", start_ts=KICKOFF_0205, home="Yankees", away="Astros")
+    opening = Quote("nyy", "bet365", "pitcher_strikeouts", "5.5",
+                    "Gerrit Cole Over", _american(-110))
+    detector.process(event, [opening], T_0144)
+
+    first = detector.process(
+        event, [dataclasses.replace(opening, odds=_american(-121))], T_0201)
+    assert len(first) == 1
+    store.mark_alerted(first[0].quote, ts=T_0201)
+
+    second = detector.process(
+        event, [dataclasses.replace(opening, odds=_american(-134))],
+        KICKOFF_0205 - 60)
+    assert len(second) == 1
+    assert second[0].is_repeat
+
+
+def test_a_book_outside_the_two_named_is_ignored(cole_config, store):
+    import dataclasses
+
+    detector = DropDetector(cole_config, store)
+    event = Event(id="nyy", start_ts=KICKOFF_0205, home="Yankees", away="Astros")
+    opening = Quote("nyy", "draftkings", "pitcher_strikeouts", "5.5",
+                    "Gerrit Cole Over", _american(-110))
+    detector.process(event, [opening], T_0144)
+    assert detector.process(
+        event, [dataclasses.replace(opening, odds=_american(-140))], T_0201) == []
+
+
+def test_the_alert_reads_in_american(cole_config, store):
+    """The message must not make the reader convert 1.83 back to -121."""
+    import dataclasses
+
+    from odds_watcher.telegram import format_alert
+
+    detector = DropDetector(cole_config, store)
+    event = Event(id="nyy", start_ts=KICKOFF_0205, home="Yankees", away="Astros",
+                  sport="baseball", league="MLB")
+    opening = Quote("nyy", "bet365", "pitcher_strikeouts", "5.5",
+                    "Gerrit Cole Over", _american(-110))
+    detector.process(event, [opening], T_0144)
+    alert = detector.process(
+        event, [dataclasses.replace(opening, odds=_american(-121))], T_0201)[0]
+
+    text = format_alert(alert, "american")
+    assert "-110" in text and "-121" in text
+    assert "-10.0%" in text

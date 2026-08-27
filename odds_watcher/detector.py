@@ -38,11 +38,49 @@ class Alert:
         return self.repeat
 
 
+def decimal_to_american(decimal: float) -> float:
+    """The American price for a decimal one. 1.91 -> -110, 2.50 -> +150."""
+    if decimal >= 2.0:
+        return (decimal - 1.0) * 100.0
+    return -100.0 / (decimal - 1.0)
+
+
 def drop_pct(reference: float, current: float) -> float:
     """Percentage the price has shortened by (negative when it drifted out)."""
     if reference <= 0:
         return 0.0
     return (reference - current) / reference * 100.0
+
+
+def american_drop_pct(reference: float, current: float) -> float:
+    """The same move, measured the way a bettor quotes it.
+
+    A move from -110 to -121 is "ten percent" at the counter, but the decimal
+    prices are 1.9091 and 1.8264 -- a 4.33% drop. The two scales differ by
+    more than a factor of two, so a threshold set in one and measured in the
+    other never fires.
+
+    Around even money the American scale has a discontinuity: +105 and -105
+    are adjacent prices, yet identical in magnitude. A move that crosses it is
+    measured in decimal, where the ordering is continuous.
+    """
+    if reference <= 1.0 or current <= 1.0:
+        return 0.0
+    ref_american = decimal_to_american(reference)
+    now_american = decimal_to_american(current)
+    if (ref_american > 0) != (now_american > 0):
+        return drop_pct(reference, current)
+    change = abs(now_american) / abs(ref_american) - 1.0
+    # A favourite shortens as its number grows (-110 -> -121); an underdog
+    # shortens as its number shrinks (+150 -> +130).
+    return change * 100.0 if ref_american < 0 else -change * 100.0
+
+
+def measure_drop(reference: float, current: float, metric: str) -> float:
+    """Shortening of `reference` to `current`, on the configured scale."""
+    if metric == "american":
+        return american_drop_pct(reference, current)
+    return drop_pct(reference, current)
 
 
 def market_allowed(market: str, wanted: Sequence[str]) -> bool:
@@ -137,7 +175,7 @@ class DropDetector:
                 continue
 
             reference = state.last_odds if last_seen_mode else state.reference_odds
-            change = drop_pct(reference, quote.odds)
+            change = measure_drop(reference, quote.odds, cfg.drop_metric)
             if change < cfg.min_drop_pct:
                 continue
 

@@ -85,7 +85,22 @@ def outcome_label(quote, event) -> str:
     return quote.outcome
 
 
-def format_alert(alert: Alert) -> str:
+def format_price(decimal_odds: float, odds_format: str = "decimal") -> str:
+    """Render a price the way the reader configured it.
+
+    Prices are held in decimal internally because a percentage move is only
+    meaningful on a continuous scale, but a message that says 1.83 to someone
+    who reads -121 all day is a message they have to convert before acting.
+    """
+    if odds_format != "american":
+        return f"{decimal_odds:.2f}"
+    from .detector import decimal_to_american
+
+    american = decimal_to_american(decimal_odds)
+    return f"{american:+.0f}"
+
+
+def format_alert(alert: Alert, odds_format: str = "decimal") -> str:
     """Render one drop as a Telegram HTML message."""
     quote = alert.quote
     event = alert.event
@@ -104,16 +119,17 @@ def format_alert(alert: Alert) -> str:
         f"({_esc(format_clock(event.start_ts))})",
         "",
         f"Market: <b>{_esc(market)}</b> — <b>{_esc(outcome_label(quote, event))}</b>",
-        f"Odds: <s>{alert.reference_odds:.2f}</s> → <b>{quote.odds:.2f}</b> "
+        f"Odds: <s>{_esc(format_price(alert.reference_odds, odds_format))}</s> → "
+        f"<b>{_esc(format_price(quote.odds, odds_format))}</b> "
         f"(<b>-{alert.drop_pct:.1f}%</b>)",
     ]
     return "\n".join(lines)
 
 
-def format_digest(alerts: list) -> str:
+def format_digest(alerts: list, odds_format: str = "decimal") -> str:
     """One message covering several drops found in the same poll."""
     if len(alerts) == 1:
-        return format_alert(alerts[0])
-    blocks = [format_alert(alert) for alert in alerts]
+        return format_alert(alerts[0], odds_format)
+    blocks = [format_alert(alert, odds_format) for alert in alerts]
     separator = "\n\n" + "—" * 12 + "\n\n"
     return separator.join(blocks)

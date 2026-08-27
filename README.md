@@ -17,6 +17,32 @@ Odds: 2.00 → 1.80 (-10.0%)
 
 ## How it decides to alert
 
+### Which scale the threshold is measured on
+
+`MIN_DROP_PCT` means something different depending on `DROP_METRIC`, and the
+difference is more than a factor of two:
+
+| Move | `DROP_METRIC=american` | `DROP_METRIC=decimal` |
+| --- | ---: | ---: |
+| -110 → -121 | 10.00% | 4.33% |
+| -110 → -158 | 43.6% | 10.00% |
+| +150 → +130 | 13.33% | 8.00% |
+
+A bettor quotes -110 → -121 as "ten percent", because that is ten percent of
+the American price. The decimal prices are 1.9091 and 1.8264, which is a 4.33%
+drop. Set the threshold on one scale and measure it on the other and nothing
+ever fires: `MIN_DROP_PCT=10` in decimal is waiting for -110 → -158.
+
+`decimal` is the default because it is continuous and comparable across
+price ranges. Choose `american` when your threshold comes from how you read a
+board. Around even money the American scale is discontinuous — +105 and -105
+are adjacent prices but identical in magnitude — so a move that crosses it is
+measured in decimal, where the ordering still holds.
+
+`ODDS_FORMAT=american` also renders the alert itself in American, so a message
+reads `-110 → -121` rather than `1.91 → 1.83`.
+
+
 `BASELINE_MODE` picks between three rules:
 
 | | `window-entry` (default) | `first-seen` | `last-seen` |

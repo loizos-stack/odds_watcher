@@ -112,6 +112,10 @@ class Config:
     #   "last-seen"    - the previous recorded price; every poll is compared
     #                    with the one before it, inside the alert window.
     baseline_mode: str = "window-entry"
+    # Which scale MIN_DROP_PCT is measured on. Bettors quote a move as a
+    # percentage of the American price (-110 to -121 is "10%"); the same
+    # move is 4.33% in decimal, so the choice changes what fires by 2x.
+    drop_metric: str = "decimal"
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
     # Ceiling on messages from one poll. With every market and player prop
@@ -208,6 +212,12 @@ class Config:
                 f"'parlay-api', got {provider!r}"
             )
 
+        drop_metric = env.get("DROP_METRIC", "decimal").strip().lower()
+        if drop_metric not in ("decimal", "american"):
+            raise ConfigError(
+                "DROP_METRIC must be 'decimal' or 'american', got "
+                f"{drop_metric!r}"
+            )
         baseline_mode = env.get("BASELINE_MODE", "window-entry").strip().lower()
         if baseline_mode not in ("window-entry", "first-seen", "last-seen"):
             raise ConfigError(
@@ -261,6 +271,7 @@ class Config:
             baseline_lead_seconds=baseline_lead,
             min_drop_pct=_get_float(env, "MIN_DROP_PCT", 2.0, minimum=0.1),
             baseline_mode=baseline_mode,
+            drop_metric=drop_metric,
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
             poll_interval_seconds=poll_interval,
