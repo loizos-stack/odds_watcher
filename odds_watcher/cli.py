@@ -727,12 +727,7 @@ def cmd_verify(config: Config, wait: int = 90, sleep=time.sleep) -> int:
               f"on {', '.join(config.bookmakers)}, twice, {wait}s apart\n")
         first = _snapshot(api, ids, config, sport)
         if not first:
-            print("✗ the API returned no prices at all for these fixtures.",
-                  file=sys.stderr)
-            print("  Check BOOKMAKERS and FEATURED_MARKETS: an odds request that "
-                  "names a key\n  the provider does not price comes back empty, "
-                  "not as an error.", file=sys.stderr)
-            return 1
+            return _diagnose_empty(api, ids, config, sport)
         print(f"  first pass:  {len(first)} price(s)")
         sleep(wait)
         second = _snapshot(api, ids, config, sport)
@@ -788,6 +783,45 @@ def cmd_verify(config: Config, wait: int = 90, sleep=time.sleep) -> int:
               "`movements` also shows nothing near "
               f"{config.min_drop_pct:.1f}%, lower it.")
     return 0
+
+
+def _diagnose_empty(api, ids: list, config: Config, sport: str) -> int:
+    """Say WHY an odds request came back with nothing.
+
+    Three faults look identical from the outside: the provider prices nothing
+    for these keys, or it prices them but under event ids that do not match
+    the ones the fixture endpoint gave us, or it returns rows this parser does
+    not recognise. Asking again without the id filter separates the second
+    from the other two.
+    """
+    print("✗ no prices came back for any of these fixtures.", file=sys.stderr)
+
+    unfiltered = {q.key: q for q in api.get_multi_odds([], config.bookmakers, sport=sport)}
+    if not unfiltered:
+        print("\n  The odds endpoint returns nothing for this sport even with no "
+              "event filter.", file=sys.stderr)
+        print("  That is a request-shape problem, not a matching one. Check:",
+              file=sys.stderr)
+        print(f"    BOOKMAKERS={','.join(config.bookmakers)}  "
+              "-- `bookmakers` lists what this provider accepts", file=sys.stderr)
+        print(f"    FEATURED_MARKETS={','.join(config.featured_markets)}  "
+              "-- `markets` lists what this sport offers", file=sys.stderr)
+        print(f"    REGIONS={','.join(config.regions)}", file=sys.stderr)
+        print("  A key the provider does not price returns an empty payload "
+              "rather than an error.", file=sys.stderr)
+        return 1
+
+    # Prices exist; they simply did not match the ids we asked about.
+    odds_ids = sorted({key[0] for key in unfiltered})
+    print(f"\n  The odds endpoint DOES return {len(unfiltered)} price(s) across "
+          f"{len(odds_ids)} fixture(s) —", file=sys.stderr)
+    print("  but under event ids that do not match the fixture list, so every "
+          "price is\n  filtered out before it is ever recorded.", file=sys.stderr)
+    print(f"\n  ids from the events endpoint: {', '.join(ids[:3])}", file=sys.stderr)
+    print(f"  ids from the odds endpoint:   {', '.join(odds_ids[:3])}", file=sys.stderr)
+    print("\n  This is a bug in the provider client, not in your configuration.",
+          file=sys.stderr)
+    return 1
 
 
 def _snapshot(api, ids: list, config: Config, sport: str) -> dict:

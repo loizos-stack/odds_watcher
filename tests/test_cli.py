@@ -175,13 +175,13 @@ def test_verify_distinguishes_a_quiet_market(config, wired, capsys):
 
 def test_verify_calls_out_an_empty_first_pass(config, wired, capsys):
     """No prices at all is a config fault, not a quiet market."""
-    wired(TwoPassApi([[], []], events=EVENTS))
+    wired(TwoPassApi([[], [], []], events=EVENTS))
     rc = cli.cmd_verify(config, wait=1, sleep=lambda s: None)
 
     _out, err = capsys.readouterr()
     assert rc == 1
-    assert "returned no prices at all" in err
-    assert "comes back empty, not as an error" in err
+    assert "no prices came back for any of these fixtures" in err
+    assert "returns an empty payload rather than an error" in err
 
 
 # --- applying a preset must never destroy what is already configured -------
@@ -263,3 +263,42 @@ def test_preset_refuses_a_missing_source(tmp_path, capsys):
     rc = cli.cmd_preset(tmp_path / "nope.example", tmp_path / ".env")
     assert rc == 2
     assert "no such preset" in capsys.readouterr().err
+
+
+class EmptyThenFull(FakeApi):
+    """No prices when ids are named, prices when they are not."""
+
+    def __init__(self, quotes, events=()):
+        super().__init__(events=events)
+        self.quotes = quotes
+
+    def get_multi_odds(self, ids, bookmakers, *, sport=""):
+        return [] if ids else list(self.quotes)
+
+
+def test_verify_names_an_event_id_mismatch(config, wired, capsys):
+    """Prices exist but under other ids: filtered out before being recorded."""
+    from odds_watcher.odds_api import Quote
+
+    wired(EmptyThenFull([Quote("odds-side-1", "bet365", "h2h", "", "Home", 2.0)],
+                        events=[Event(id="events-side-1", start_ts=9e9,
+                                      home="A", away="B")]))
+    rc = cli.cmd_verify(config, wait=1, sleep=lambda s: None)
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "do not match the fixture list" in err
+    assert "events-side-1" in err and "odds-side-1" in err
+    assert "bug in the provider client" in err
+
+
+def test_verify_separates_an_empty_provider_from_a_mismatch(config, wired, capsys):
+    """Nothing even without the filter is a request-shape problem."""
+    wired(EmptyThenFull([], events=[Event(id="e1", start_ts=9e9, home="A", away="B")]))
+    rc = cli.cmd_verify(config, wait=1, sleep=lambda s: None)
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "even with no event filter" in err
+    assert "request-shape problem" in err
+    assert "do not match" not in err
