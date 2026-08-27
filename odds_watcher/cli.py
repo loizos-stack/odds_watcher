@@ -196,9 +196,26 @@ def cmd_check(config: Config) -> int:
             print(f"✗ {provider}: {exc}", file=sys.stderr)
             _budget_hint(config, exc)
     else:
-        # Nothing is bound to the account here, so an empty selection is
-        # correct rather than a misconfiguration to warn about.
-        print(f"· {provider} chooses books per request: {', '.join(config.bookmakers)}")
+        # Nothing is bound to the account here, but the keys are still sent on
+        # every odds call: a wrong one fails all of them, and the watcher's
+        # only symptom is that no alert ever arrives. Verify them now.
+        try:
+            known = api.get_bookmakers()
+            keys = {identifier.lower() for identifier, _label in known}
+            unknown = [b for b in config.bookmakers if b.lower() not in keys]
+            if not known:
+                print(f"· {provider} chooses books per request: {', '.join(config.bookmakers)}")
+            elif unknown:
+                ok = False
+                print(f"✗ {provider} does not know: {', '.join(unknown)}", file=sys.stderr)
+                _suggest_bookmakers(api, tuple(unknown))
+                print("  every odds request names these keys, so one bad entry "
+                      "returns no prices at all")
+            else:
+                print(f"✓ {provider} accepts all {len(config.bookmakers)} book(s): "
+                      f"{', '.join(config.bookmakers)}")
+        except (TransportError, BudgetExceeded) as exc:
+            print(f"! could not verify BOOKMAKERS: {exc}", file=sys.stderr)
 
     try:
         now = now_ts()

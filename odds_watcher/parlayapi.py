@@ -37,6 +37,19 @@ GLOBAL_MARKET_KEYS = "__parlay_game_markets__"
 CORE_GAME_MARKETS = ("h2h", "spreads", "totals")
 
 
+def is_market_error(message: str) -> bool:
+    """Whether a 400 is complaining about market keys at all.
+
+    A rejected bookmaker key and a rejected market key are both 400s, and
+    narrowing the market list does not fix the former -- it just spends
+    another request to be told the same thing.
+
+    Pass the response body, never str(exc): the request URL carries a
+    ``markets=`` parameter, so every 400 would look like a market error.
+    """
+    return "INVALID_MARKET" in message or "market" in message.lower()
+
+
 def valid_markets_from_error(message: str) -> tuple:
     """The market keys an INVALID_MARKET response lists as acceptable.
 
@@ -487,12 +500,26 @@ class ParlayApiClient:
         return rows[0][0]
 
     def get_bookmakers(self) -> list:
+        """The book keys this account may name, from the reference endpoint.
+
+        Mining them out of an odds payload cannot work: that call has to name
+        bookmakers itself, so a wrong key in BOOKMAKERS fails the very listing
+        you need in order to correct it.
+        """
+        payload = self._call("v1/bookmakers")
+        if isinstance(payload, dict):
+            for key in ("bookmakers", "data", "results", "items"):
+                if isinstance(payload.get(key), list):
+                    payload = payload[key]
+                    break
         rows: set = set()
-        for block in _as_list(self._sport_odds(self._any_sport())):
-            if isinstance(block, dict):
-                for book, _markets in _iter_books(block):
-                    if book:
-                        rows.add((book, book))
+        for item in _as_list(payload):
+            if isinstance(item, str):
+                rows.add((item, item))
+            elif isinstance(item, dict):
+                key = _first(item, "key", "id", "slug", "bookmaker", "name", default=None)
+                if key:
+                    rows.add((str(key), _text(_first(item, "title", "name", default=key))))
         return sorted(rows)
 
     def get_selected_bookmakers(self) -> list:
@@ -575,7 +602,7 @@ class ParlayApiClient:
         try:
             payload = request(markets)
         except HttpError as exc:
-            valid = valid_markets_from_error(str(exc)) if exc.status == 400 else ()
+            valid = valid_markets_from_error(exc.body) if exc.status == 400 else ()
             if not valid:
                 raise
             if not self._valid_markets:
@@ -595,7 +622,11 @@ class ParlayApiClient:
             )
             try:
                 payload = request(wanted)
-            except HttpError:
+            except HttpError as retry_exc:
+                if not is_market_error(retry_exc.body):
+                    # Not a market problem -- narrowing markets again would
+                    # spend another request to get the same error.
+                    raise
                 # Some listed keys belong to other sports; fall back to the core.
                 log.warning("%s: falling back to %s", sport, ", ".join(CORE_GAME_MARKETS))
                 wanted = CORE_GAME_MARKETS

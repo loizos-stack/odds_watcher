@@ -27,6 +27,9 @@ class FakeApi:
     def get_selected_bookmakers(self):
         return []
 
+    def get_bookmakers(self):
+        return []
+
 
 class FakeTelegram:
     def get_me(self):
@@ -84,3 +87,31 @@ def test_an_account_provider_still_warns_about_unselected_books(config, wired, c
     cli.cmd_check(dataclasses.replace(config, odds_provider="odds-api-io",
                                       bookmakers=("bet365",)))
     assert "not selected on the account" in capsys.readouterr().out
+
+
+def test_unknown_bookmakers_are_caught_before_they_silence_the_watcher(config, wired, capsys):
+    """A bad book key fails every odds call, and the only symptom is silence."""
+    class Books(FakeApi):
+        def get_bookmakers(self):
+            return [("bet365", "Bet365"), ("draftkings", "DraftKings")]
+
+    wired(Books(events=[Event(id="e1", start_ts=9e9, home="A", away="B")]))
+    rc = cli.cmd_check(dataclasses.replace(
+        config, odds_provider="parlay-api", bookmakers=("Bet365", "Betano")))
+
+    out, err = capsys.readouterr()
+    assert rc == 1
+    assert "does not know: Betano" in err
+    assert "nothing resembling 'Betano'" in out
+    assert "Bet365" not in err.replace("Betano", "")   # the valid one is not flagged
+
+
+def test_correct_bookmakers_are_confirmed(config, wired, capsys):
+    class Books(FakeApi):
+        def get_bookmakers(self):
+            return [("bet365", "Bet365"), ("draftkings", "DraftKings")]
+
+    wired(Books(events=[Event(id="e1", start_ts=9e9, home="A", away="B")]))
+    cli.cmd_check(dataclasses.replace(
+        config, odds_provider="parlay-api", bookmakers=("Bet365", "DraftKings")))
+    assert "accepts all 2 book(s)" in capsys.readouterr().out

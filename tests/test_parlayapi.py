@@ -502,7 +502,46 @@ def test_a_listing_samples_a_real_sport_when_none_is_configured(monkeypatch):
         return [], {}
 
     monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
-    ParlayApiClient("k", featured_markets=("h2h",)).get_bookmakers()
+    ParlayApiClient("k", featured_markets=("h2h",))._any_sport()
 
-    assert any("/v1/sports/baseball_mlb/odds" in url for url in asked)
     assert not any("/all/odds" in url or "/upcoming/odds" in url for url in asked)
+
+
+def test_bookmakers_come_from_the_reference_endpoint(monkeypatch):
+    """Mining them from an odds payload fails on exactly the wrong key."""
+    asked = []
+
+    def fake(url, **kw):
+        asked.append(url)
+        return {"bookmakers": [{"key": "bet365", "title": "Bet365"},
+                               {"key": "draftkings", "title": "DraftKings"}]}, {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    rows = ParlayApiClient("k", bookmakers=("Betano",)).get_bookmakers()
+
+    assert rows == [("bet365", "Bet365"), ("draftkings", "DraftKings")]
+    assert len(asked) == 1 and "/v1/bookmakers" in asked[0]
+    # The listing must not be filtered by the very keys it exists to correct.
+    assert "bookmakers=" not in asked[0]
+
+
+def test_a_non_market_400_is_not_retried_with_fewer_markets(monkeypatch):
+    """A rejected bookmaker key is not fixed by asking for less."""
+    from odds_watcher.http import HttpError
+
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        if "markets=all" in url:
+            raise HttpError(400, '{"message":"Invalid market. Valid values are: '
+                                 'h2h, spreads, totals;"}', url)
+        raise HttpError(400, '{"detail":{"error":"UNKNOWN_BOOKMAKER",'
+                             '"message":"Unknown bookmaker key(s): [\'Betano\']."}}', url)
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", featured_markets=("all",), bookmakers=("Betano",))
+    with pytest.raises(HttpError, match="UNKNOWN_BOOKMAKER"):
+        client._sport_odds("baseball_mlb")
+
+    assert len(calls) == 2  # the probe and one retry, not a third on core markets
