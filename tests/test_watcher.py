@@ -1121,3 +1121,21 @@ def test_a_restored_partial_list_still_retries_soon(config, tmp_path):
     watcher.refresh_events(1000.0 + 700)    # past PARTIAL_REFRESH_RETRY_SECONDS
     assert api.event_calls == 1
     store2.close()
+
+
+def test_an_incomplete_list_is_not_left_broken_for_a_whole_idle_interval(config, store):
+    """The repair happens inside a poll, so the sleep must not outlast it."""
+    import dataclasses
+
+    from odds_watcher.watcher import PARTIAL_REFRESH_RETRY_SECONDS
+
+    cfg = dataclasses.replace(config, idle_poll_interval_seconds=900,
+                              poll_interval_seconds=600)
+    watcher = Watcher(cfg, FakeApi([], []), FakeTelegram(), store)
+    watcher._events = [FAR_EVENT]           # nothing in range
+
+    watcher._events_partial = False
+    assert watcher.seconds_until_next_poll(KICKOFF) == 900
+
+    watcher._events_partial = True
+    assert watcher.seconds_until_next_poll(KICKOFF) == PARTIAL_REFRESH_RETRY_SECONDS

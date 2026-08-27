@@ -281,6 +281,12 @@ class Watcher:
             if event.seconds_to_start(now) > cfg.baseline_lead_seconds
         ]
         wait = min(upcoming) if upcoming else cfg.idle_poll_interval_seconds
+        if self._events_partial:
+            # The retry that repairs a truncated fixture list happens inside a
+            # poll, so sleeping past it would leave whole sports missing for
+            # an idle interval rather than for the retry window. The list is
+            # also incomplete, so `upcoming` is computed from partial data.
+            wait = min(wait, PARTIAL_REFRESH_RETRY_SECONDS)
         return int(max(cfg.poll_interval_seconds, min(wait, cfg.idle_poll_interval_seconds)))
 
     def estimate_poll_cost(self, now: float) -> int:
