@@ -51,6 +51,20 @@ CREATE TABLE IF NOT EXISTS market_keys (
     checked_at REAL NOT NULL,
     PRIMARY KEY (sport, key)
 );
+CREATE TABLE IF NOT EXISTS fixtures (
+    id         TEXT PRIMARY KEY,
+    start_ts   REAL NOT NULL,
+    home       TEXT NOT NULL,
+    away       TEXT NOT NULL,
+    sport      TEXT NOT NULL DEFAULT '',
+    sport_key  TEXT NOT NULL DEFAULT '',
+    league     TEXT NOT NULL DEFAULT '',
+    league_slug TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_line_state_start ON line_state (event_start);
 """
 
@@ -262,6 +276,56 @@ class Store:
 
     def tracked_lines(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM line_state").fetchone()[0]
+
+    # -- the fixture list --------------------------------------------------
+    def save_fixtures(self, events, now: float, *, partial: bool) -> None:
+        """Persist the fixture list so a restart does not re-buy it.
+
+        Listing every sport is one request each -- hundreds in a burst. Held
+        only in memory, that burst is repaid on every restart, which during a
+        session of configuration changes is most of an allowance.
+        """
+        self.conn.execute("DELETE FROM fixtures")
+        self.conn.executemany(
+            """INSERT INTO fixtures
+               (id, start_ts, home, away, sport, sport_key, league, league_slug)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            [(e.id, e.start_ts, e.home, e.away, e.sport, e.sport_key, e.league,
+              e.league_slug) for e in events],
+        )
+        self.conn.executemany(
+            "INSERT INTO meta (key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [("fixtures_fetched_at", repr(float(now))),
+             ("fixtures_partial", "1" if partial else "0")],
+        )
+        self.conn.commit()
+
+    def load_fixtures(self):
+        """``(events, fetched_at, partial)`` from the last run, or ``([], 0, False)``."""
+        from .odds_api import Event
+
+        rows = self.conn.execute(
+            "SELECT id, start_ts, home, away, sport, sport_key, league, league_slug "
+            "FROM fixtures ORDER BY start_ts"
+        ).fetchall()
+        if not rows:
+            return [], 0.0, False
+        meta = {
+            row["key"]: row["value"]
+            for row in self.conn.execute("SELECT key, value FROM meta")
+        }
+        try:
+            fetched_at = float(meta.get("fixtures_fetched_at", "0"))
+        except ValueError:
+            fetched_at = 0.0
+        events = [
+            Event(id=row["id"], start_ts=row["start_ts"], home=row["home"],
+                  away=row["away"], sport=row["sport"], sport_key=row["sport_key"],
+                  league=row["league"], league_slug=row["league_slug"])
+            for row in rows
+        ]
+        return events, fetched_at, meta.get("fixtures_partial") == "1"
 
     # -- learned market keys ----------------------------------------------
     def get_market_keys(self, sport: str, max_age: float, now: Optional[float] = None):

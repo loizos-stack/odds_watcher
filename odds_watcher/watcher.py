@@ -59,9 +59,18 @@ class Watcher:
         self.clock = clock
         self.sleep = sleep
         self.detector = DropDetector(config, store)
-        self._events: list[Event] = []
-        self._events_fetched_at: float = 0.0
-        self._events_partial = False
+        # Carry the fixture list across restarts: re-listing every sport is
+        # one request each, and repaying that on every restart is the single
+        # most expensive thing this daemon can do.
+        self._events, self._events_fetched_at, self._events_partial = store.load_fixtures()
+        if self._events:
+            log.info(
+                "restored %d fixture(s) from %s, last refreshed %s ago%s",
+                len(self._events),
+                store.path,
+                format_countdown(self.clock() - self._events_fetched_at),
+                " (incomplete)" if self._events_partial else "",
+            )
         self._all_sports: tuple = ()
         self._sports_fetched_at: float = 0.0
 
@@ -109,6 +118,7 @@ class Watcher:
             self._events = sorted(events.values(), key=lambda e: e.start_ts)
             self._events_fetched_at = now
             self._events_partial = partial
+            self.store.save_fixtures(self._events, now, partial=partial)
             if partial:
                 log.error(
                     "fixture list is INCOMPLETE: %d event(s) from %d of %d sport(s) — the "

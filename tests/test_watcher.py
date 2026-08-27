@@ -1075,3 +1075,49 @@ def test_a_complete_refresh_is_cached_for_the_full_interval(config, store):
     watcher.refresh_events(1000.0 + 3600)
     assert api.event_calls == 1          # served from cache, as intended
     assert not watcher._events_partial
+
+
+def test_the_fixture_list_survives_a_restart(config, tmp_path):
+    """Re-listing every sport on each restart is the costliest thing it can do."""
+    import dataclasses
+
+    from odds_watcher.store import Store
+
+    cfg = dataclasses.replace(config, db_path=tmp_path / "restart.db",
+                              events_refresh_seconds=86400)
+    store = Store(cfg.db_path)
+    api = FakeApi([EVENT], [])
+    Watcher(cfg, api, FakeTelegram(), store, clock=lambda: 1000.0).refresh_events(1000.0)
+    store.close()
+    assert api.event_calls == 1
+
+    # A fresh process, as after `systemctl restart`.
+    store2 = Store(cfg.db_path)
+    api2 = FakeApi([EVENT], [])
+    watcher = Watcher(cfg, api2, FakeTelegram(), store2, clock=lambda: 1000.0 + 60)
+    watcher.refresh_events(1000.0 + 60)
+
+    assert api2.event_calls == 0            # nothing re-bought
+    assert [e.id for e in watcher._events] == [EVENT.id]
+    store2.close()
+
+
+def test_a_restored_partial_list_still_retries_soon(config, tmp_path):
+    """An incomplete list must not become permanent by surviving a restart."""
+    import dataclasses
+
+    from odds_watcher.store import Store
+
+    cfg = dataclasses.replace(config, db_path=tmp_path / "partial.db",
+                              events_refresh_seconds=86400)
+    store = Store(cfg.db_path)
+    store.save_fixtures([EVENT], 1000.0, partial=True)
+    store.close()
+
+    store2 = Store(cfg.db_path)
+    api = FakeApi([EVENT], [])
+    watcher = Watcher(cfg, api, FakeTelegram(), store2, clock=lambda: 1000.0 + 700)
+    assert watcher._events_partial
+    watcher.refresh_events(1000.0 + 700)    # past PARTIAL_REFRESH_RETRY_SECONDS
+    assert api.event_calls == 1
+    store2.close()
