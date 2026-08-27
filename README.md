@@ -544,6 +544,50 @@ provider, and `check` prints the account balance from the
 
 ## When nothing signals
 
+Four different faults produce the same symptom — no Telegram message — and
+three of them look identical in the database:
+
+| Fault | What the database shows |
+| --- | --- |
+| No prices returned at all | nothing tracked |
+| Each line priced once | tracked, `samples = 1`, no movement |
+| Line identity changes between polls | tracked, `samples = 1`, no movement |
+| Prices genuinely flat, or moves under the threshold | tracked, `samples > 1`, small moves |
+
+`movements` separates the first two from the last, but it cannot tell an
+unstable line identity from a market that simply was not revisited: both leave
+a table full of lines seen once. A price's identity is
+`(event, bookmaker, market, line, outcome)`, so a book that moves its handicap
+from 2.5 to 3.0 produces a *different* line, not a movement on the old one.
+
+`verify` asks the API instead of the database. It prices one sport twice, a
+configurable interval apart, and reports how many lines survived between the
+two passes and how many changed price:
+
+```bash
+python -m odds_watcher verify --sport baseball_mlb --wait 120
+```
+
+```
+  first pass:  428 price(s)
+  second pass: 431 price(s)
+
+412 line(s) present in both passes, 16 vanished, 19 new
+37 of them changed price (9.0%)
+
+  fixture                 book         market       outcome      from      to     move
+  Yankees vs Red Sox      bet365       h2h          Yankees      1.91    1.83   -4.19%
+  ...
+
+sharpest shortening in 120s: 4.19%  (MIN_DROP_PCT=2.0)
+```
+
+That output rules out every fault at once: prices exist, identities are
+stable, and the market moves. If instead no line survives between passes, the
+identity is unstable; if none changes price, the market really is quiet. It
+costs two odds requests and does not touch the watcher's state, so it is safe
+to run against a live service.
+
 Silence has two very different causes: the prices did not move, or they moved
 less than `MIN_DROP_PCT`. The alert log cannot tell them apart, so the recorded
 prices are reported directly:

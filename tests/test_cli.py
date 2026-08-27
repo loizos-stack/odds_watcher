@@ -115,3 +115,70 @@ def test_correct_bookmakers_are_confirmed(config, wired, capsys):
     cli.cmd_check(dataclasses.replace(
         config, odds_provider="parlay-api", bookmakers=("Bet365", "DraftKings")))
     assert "accepts all 2 book(s)" in capsys.readouterr().out
+
+
+class TwoPassApi(FakeApi):
+    """Returns a different price list on each odds call."""
+
+    def __init__(self, passes, events=()):
+        super().__init__(events=events)
+        self.passes = list(passes)
+        self.odds_calls = 0
+
+    def get_multi_odds(self, ids, bookmakers, *, sport=""):
+        self.odds_calls += 1
+        return self.passes.pop(0) if self.passes else []
+
+
+def _q(odds, market="h2h", outcome="Home", line=""):
+    from odds_watcher.odds_api import Quote
+    return Quote("e1", "bet365", market, line, outcome, odds)
+
+
+EVENTS = [Event(id="e1", start_ts=9e9, home="Ajax", away="PSV")]
+
+
+def test_verify_reports_a_real_price_move(config, wired, capsys):
+    api = wired(TwoPassApi([[_q(2.10), _q(1.80, outcome="Away")],
+                            [_q(1.95), _q(1.80, outcome="Away")]], events=EVENTS))
+    rc = cli.cmd_verify(config, wait=1, sleep=lambda s: None)
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "2 line(s) present in both passes" in out
+    assert "1 of them changed price" in out
+    assert "sharpest shortening in 1s: 7.14%" in out
+    assert api.odds_calls == 2
+
+
+def test_verify_names_unstable_line_identity(config, wired, capsys):
+    """A moved handicap makes a different line, so nothing is ever compared."""
+    wired(TwoPassApi([[_q(2.10, market="totals", line="2.5")],
+                      [_q(2.10, market="totals", line="3.0")]], events=EVENTS))
+    rc = cli.cmd_verify(config, wait=1, sleep=lambda s: None)
+
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "no line survived from one pass to the next" in out
+    assert "if a book moves its handicap" in out
+
+
+def test_verify_distinguishes_a_quiet_market(config, wired, capsys):
+    wired(TwoPassApi([[_q(2.10)], [_q(2.10)]], events=EVENTS))
+    rc = cli.cmd_verify(config, wait=1, sleep=lambda s: None)
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "prices are stable over 1s" in out
+    assert "quiet market is the honest answer" in out
+
+
+def test_verify_calls_out_an_empty_first_pass(config, wired, capsys):
+    """No prices at all is a config fault, not a quiet market."""
+    wired(TwoPassApi([[], []], events=EVENTS))
+    rc = cli.cmd_verify(config, wait=1, sleep=lambda s: None)
+
+    _out, err = capsys.readouterr()
+    assert rc == 1
+    assert "returned no prices at all" in err
+    assert "comes back empty, not as an error" in err

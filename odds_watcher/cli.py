@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +44,7 @@ REQUIRED_CREDENTIALS = {
     "props": ("ODDS_API_KEY",),
     "usage": ("ODDS_API_KEY",),
     "movements": (),
+    "verify": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -57,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "verify", "chat-id", "status"],
     )
     parser.add_argument(
         "--sport",
@@ -86,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-balance",
         action="store_true",
         help="usage: query the provider's remaining allowance (costs one request)",
+    )
+    parser.add_argument(
+        "--wait",
+        type=int,
+        default=90,
+        help="verify: seconds between the two price snapshots (default 90)",
     )
     parser.add_argument(
         "--reset-budget",
@@ -685,6 +693,104 @@ def cmd_usage(config: Config, check_balance: bool = False) -> int:
     return 0
 
 
+def cmd_verify(config: Config, wait: int = 90, sleep=time.sleep) -> int:
+    """Price the same sport twice and report what actually changed.
+
+    Silence has had four causes in this project's life: no prices at all, a
+    price seen once, prices that genuinely did not move, and prices whose
+    identity changed between polls so that no two samples were ever compared.
+    A movement report cannot tell the last two apart, because both leave a
+    database full of lines seen once. This asks the API directly.
+
+    Costs two odds requests (four with props), and does not touch the
+    watcher's own state.
+    """
+    store, _, api, _ = _components(config)
+    try:
+        sport = _sample_sport(api, config)
+        now = now_ts()
+        events = [e for e in api.get_events(sport) if e.seconds_to_start(now) > 0]
+        if not events:
+            print(f"no upcoming fixtures for {sport}", file=sys.stderr)
+            return 1
+        ids = [e.id for e in events]
+        names = {e.id: e.name for e in events}
+
+        print(f"pricing {len(events)} upcoming {sport} fixture(s) "
+              f"on {', '.join(config.bookmakers)}, twice, {wait}s apart\n")
+        first = _snapshot(api, ids, config, sport)
+        if not first:
+            print("✗ the API returned no prices at all for these fixtures.",
+                  file=sys.stderr)
+            print("  Check BOOKMAKERS and FEATURED_MARKETS: an odds request that "
+                  "names a key\n  the provider does not price comes back empty, "
+                  "not as an error.", file=sys.stderr)
+            return 1
+        print(f"  first pass:  {len(first)} price(s)")
+        sleep(wait)
+        second = _snapshot(api, ids, config, sport)
+        print(f"  second pass: {len(second)} price(s)\n")
+    except (TransportError, BudgetExceeded, UnsupportedByProvider) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        _budget_hint(config, exc)
+        return 1
+    finally:
+        store.close()
+
+    shared = first.keys() & second.keys()
+    vanished = first.keys() - second.keys()
+    appeared = second.keys() - first.keys()
+    moved = {k: (first[k].odds, second[k].odds) for k in shared
+             if first[k].odds != second[k].odds}
+
+    print(f"{len(shared)} line(s) present in both passes, "
+          f"{len(vanished)} vanished, {len(appeared)} new")
+    if not shared:
+        print("\n! no line survived from one pass to the next, so nothing can ever")
+        print("  be compared. The identity of a price is "
+              "(event, book, market, line, outcome);")
+        print("  if a book moves its handicap the line becomes a different one.")
+        return 1
+
+    print(f"{len(moved)} of them changed price "
+          f"({len(moved) / len(shared) * 100:.1f}%)\n")
+    if not moved:
+        print(f"! prices are stable over {wait}s. The lines are tracked correctly, "
+              "so a\n  quiet market is the honest answer — try again closer to "
+              "kick-off, when\n  books move most.")
+        return 0
+
+    ranked = sorted(moved.items(), key=lambda kv: (kv[1][1] - kv[1][0]) / kv[1][0])
+    width = min(max(len(names.get(k[0], k[0])) for k in moved), 30)
+    print(f"  {'fixture'.ljust(width)}  {'book':<12} {'market':<12} "
+          f"{'outcome':<16} {'from':>7} {'to':>7} {'move':>8}")
+    for key, (before, after) in ranked[:15]:
+        event_id, book, market, _line, outcome = key
+        pct = (after - before) / before * 100
+        print(f"  {names.get(event_id, event_id)[:width].ljust(width)}  "
+              f"{book[:12]:<12} {market[:12]:<12} {outcome[:16]:<16} "
+              f"{before:>7.2f} {after:>7.2f} {pct:>7.2f}%")
+
+    sharpest = (ranked[0][1][1] - ranked[0][1][0]) / ranked[0][1][0] * -100
+    print(f"\nsharpest shortening in {wait}s: {sharpest:.2f}%  "
+          f"(MIN_DROP_PCT={config.min_drop_pct:.1f})")
+    if sharpest < config.min_drop_pct:
+        print(f"! nothing moved as far as your threshold in this window. Over the "
+              f"whole\n  {config.baseline_lead_seconds // 60}-minute lead the "
+              "moves accumulate, so this is not conclusive —\n  but if "
+              "`movements` also shows nothing near "
+              f"{config.min_drop_pct:.1f}%, lower it.")
+    return 0
+
+
+def _snapshot(api, ids: list, config: Config, sport: str) -> dict:
+    """Every price the provider returns right now, keyed by line identity."""
+    return {
+        quote.key: quote
+        for quote in api.get_multi_odds(ids, config.bookmakers, sport=sport)
+    }
+
+
 def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = False) -> int:
     store, budget, _, _ = _components(config)
     if reset:
@@ -1237,6 +1343,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_chat_id(config)
     if args.command == "movements":
         return cmd_movements(config)
+    if args.command == "verify":
+        return cmd_verify(config, args.wait)
     if args.command == "usage":
         return cmd_usage(config, args.check_balance)
     if args.command == "status":
