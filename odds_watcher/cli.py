@@ -154,7 +154,7 @@ def _sample_sport(api, config: Config) -> str:
     SPORTS=all is expanded by the watcher but is not itself a sport key, so
     sending it here would report a working configuration as a bad slug.
     """
-    if not config.wants_all_sports:
+    if config.sports and not config.wants_all_sports:
         return config.sports[0]
     rows = api.get_sports()
     if not rows:
@@ -702,7 +702,7 @@ def cmd_discover_markets(config: Config) -> int:
     from .market_keys import candidates, known_sports
 
     store, _, api, _ = _components(config)
-    sport = config.sports[0] if config.sports else ""
+    sport = _sample_sport(api, config)
 
     # Some providers publish the prop keys directly, which beats probing.
     if hasattr(api, "prop_market_keys"):
@@ -842,7 +842,7 @@ def _upcoming(api, config: Config, now: float, limit: int, *, spread: bool = Fal
     on other continents, so those commands sample evenly across the whole
     upcoming horizon instead.
     """
-    events = api.get_events(config.sports[0])
+    events = api.get_events(_sample_sport(api, config))
     upcoming = sorted((e for e in events if e.seconds_to_start(now) > 0), key=lambda e: e.start_ts)
     if not spread or len(upcoming) <= limit:
         return upcoming[:limit]

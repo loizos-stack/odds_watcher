@@ -478,3 +478,31 @@ def test_a_broken_market_cache_never_breaks_a_poll(monkeypatch):
                         lambda url, **kw: ([], {}))
     client = ParlayApiClient("k", featured_markets=("h2h",), market_cache=Broken())
     assert client._sport_odds("baseball_mlb") == []
+
+
+def test_all_never_reaches_the_api_as_a_sport_key(monkeypatch):
+    """SPORTS=all is the watcher's instruction to expand, not a key to send."""
+    from odds_watcher.config import Config
+    from odds_watcher.providers import build_client
+
+    cfg = Config(odds_api_key="k", telegram_bot_token="t", telegram_chat_id="1",
+                 odds_provider="parlay-api", sports=("all",), bookmakers=("Bet365",))
+    client = build_client(cfg)
+    assert client.default_sport == ""
+
+
+def test_a_listing_samples_a_real_sport_when_none_is_configured(monkeypatch):
+    """There is no cross-sport odds endpoint, so a listing must pick one."""
+    asked = []
+
+    def fake(url, **kw):
+        asked.append(url)
+        if "/v1/sports" in url and "/odds" not in url:
+            return [{"key": "baseball_mlb", "title": "MLB"}], {}
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    ParlayApiClient("k", featured_markets=("h2h",)).get_bookmakers()
+
+    assert any("/v1/sports/baseball_mlb/odds" in url for url in asked)
+    assert not any("/all/odds" in url or "/upcoming/odds" in url for url in asked)

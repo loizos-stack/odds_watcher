@@ -471,9 +471,24 @@ class ParlayApiClient:
             "ParlayAPI identifies competitions by sport key. Use `sports`."
         )
 
+    def _any_sport(self) -> str:
+        """A real sport key to sample when the caller named none.
+
+        There is no cross-sport odds endpoint here, and no "upcoming" pseudo
+        key, so a listing has to pick a sport that actually exists.
+        """
+        if self.default_sport:
+            return self.default_sport
+        rows = self.get_sports()
+        if not rows:
+            from .theoddsapi import UnsupportedByProvider
+
+            raise UnsupportedByProvider("the provider listed no sports to sample")
+        return rows[0][0]
+
     def get_bookmakers(self) -> list:
         rows: set = set()
-        for block in _as_list(self._sport_odds(self.default_sport or "upcoming")):
+        for block in _as_list(self._sport_odds(self._any_sport())):
             if isinstance(block, dict):
                 for book, _markets in _iter_books(block):
                     if book:

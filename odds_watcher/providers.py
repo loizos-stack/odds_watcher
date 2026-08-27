@@ -14,6 +14,17 @@ from .theoddsapi import TheOddsApiClient
 PROVIDERS = ("odds-api-io", "the-odds-api", "parlay-api")
 
 
+def _default_sport(config: Config) -> str:
+    """The sport a client falls back to when a call names none.
+
+    "all" is the watcher's instruction to expand the listing, not a key any
+    provider accepts, so it must never reach one as a default.
+    """
+    if config.wants_all_sports or not config.sports:
+        return ""
+    return config.sports[0]
+
+
 def build_client(config: Config, budget=None, market_cache=None):
     """Construct the client for ``ODDS_PROVIDER``."""
     if config.odds_provider == "parlay-api":
@@ -23,7 +34,7 @@ def build_client(config: Config, budget=None, market_cache=None):
             timeout=config.request_timeout_seconds,
             budget=budget,
             prop_markets=config.prop_markets,
-            default_sport=config.sports[0] if config.sports else "",
+            default_sport=_default_sport(config),
             odds_format=config.odds_format,
             regions=config.regions,
             featured_markets=config.featured_markets,
@@ -41,7 +52,7 @@ def build_client(config: Config, budget=None, market_cache=None):
             featured_markets=config.featured_markets,
             prop_markets=config.prop_markets,
             odds_format="decimal",
-            default_sport=config.sports[0] if config.sports else "",
+            default_sport=_default_sport(config),
             market_cache=market_cache,
             market_keys_ttl=config.market_keys_ttl_seconds,
         )
