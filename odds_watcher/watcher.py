@@ -29,6 +29,9 @@ from .util import format_countdown, now_ts
 log = logging.getLogger(__name__)
 
 EVENTS_PER_ODDS_REQUEST = 20
+# How soon to try again when a refresh was cut short. A partial fixture
+# list must not be cached for the full EVENTS_REFRESH_SECONDS.
+PARTIAL_REFRESH_RETRY_SECONDS = 600
 SPORTS_REFRESH_SECONDS = 86400
 ALERTS_PER_MESSAGE = 5
 STATE_RETENTION_SECONDS = 6 * 3600
@@ -58,18 +61,33 @@ class Watcher:
         self.detector = DropDetector(config, store)
         self._events: list[Event] = []
         self._events_fetched_at: float = 0.0
+        self._events_partial = False
         self._all_sports: tuple = ()
         self._sports_fetched_at: float = 0.0
 
     # -- fixtures ---------------------------------------------------------
     def refresh_events(self, now: float, *, force: bool = False) -> list[Event]:
-        """Re-fetch the fixture list when the cache has gone stale."""
-        if not force and self._events and now - self._events_fetched_at < self.config.events_refresh_seconds:
+        """Re-fetch the fixture list when the cache has gone stale.
+
+        A refresh that the request budget cuts short leaves a fixture list
+        missing whole sports, and those fixtures are then invisible: no odds
+        are requested for them and nothing they do can alert. Such a list is
+        cached only briefly, so the gap closes at the next poll rather than
+        lasting the full refresh interval.
+        """
+        ttl = (
+            PARTIAL_REFRESH_RETRY_SECONDS
+            if self._events_partial
+            else self.config.events_refresh_seconds
+        )
+        if not force and self._events and now - self._events_fetched_at < ttl:
             return self._events
 
         events: dict[str, Event] = {}
         sports = self.resolve_sports(now)
         targets = [(sport, league) for sport in sports for league in (self.config.leagues or [None])]
+        partial = False
+        done = 0
         for sport, league in targets:
             try:
                 for event in self.api.get_events(sport, league=league):
@@ -81,14 +99,27 @@ class Watcher:
                     )
             except BudgetExceeded as exc:
                 log.warning("%s", exc)
+                partial = True
                 break
             except TransportError as exc:
                 log.error("failed to load events for sport=%s league=%s: %s", sport, league, exc)
+            done += 1
 
         if events or force:
             self._events = sorted(events.values(), key=lambda e: e.start_ts)
             self._events_fetched_at = now
-            log.info("fixture list refreshed: %d event(s)", len(self._events))
+            self._events_partial = partial
+            if partial:
+                log.error(
+                    "fixture list is INCOMPLETE: %d event(s) from %d of %d sport(s) — the "
+                    "request budget ran out. Fixtures in the remaining sports are invisible "
+                    "until this retries in %ds. Raise MAX_REQUESTS_PER_HOUR above %d, which "
+                    "is what one full refresh costs.",
+                    len(self._events), done, len(targets),
+                    PARTIAL_REFRESH_RETRY_SECONDS, len(targets),
+                )
+            else:
+                log.info("fixture list refreshed: %d event(s)", len(self._events))
         return self._events
 
     def resolve_sports(self, now: float) -> tuple:

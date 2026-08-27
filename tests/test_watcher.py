@@ -1027,3 +1027,51 @@ def test_the_estimate_counts_props_only_where_they_are_fetched(config, store):
     ]
     # mlb: odds + props = 2, table tennis: odds only = 1.
     assert watcher.estimate_poll_cost(KICKOFF - 300) == 3
+
+
+def test_a_truncated_fixture_list_is_not_cached_for_the_full_interval(config, store, caplog):
+    """A refresh the budget cuts short hides whole sports; it must retry soon."""
+    import dataclasses
+    import logging
+
+    from odds_watcher.odds_api import BudgetExceeded
+
+    class Starved(FakeApi):
+        def __init__(self):
+            super().__init__([EVENT], [])
+            self.calls = 0
+
+        def get_events(self, sport, league=None, limit=None):
+            self.calls += 1
+            if self.calls > 2:
+                raise BudgetExceeded("local request budget exhausted")
+            return [dataclasses.replace(EVENT, id=f"e{self.calls}", sport_key=sport)]
+
+    cfg = dataclasses.replace(config, sports=("a", "b", "c", "d"),
+                              events_refresh_seconds=86400)
+    watcher = Watcher(cfg, Starved(), FakeTelegram(), store)
+
+    with caplog.at_level(logging.ERROR):
+        watcher.refresh_events(1000.0)
+
+    assert watcher._events_partial
+    assert "fixture list is INCOMPLETE" in caplog.text
+    assert "2 of 4 sport(s)" in caplog.text
+
+    # An hour later a full-interval cache would still be serving the half list.
+    watcher.api = FakeApi([EVENT], [])
+    watcher.refresh_events(1000.0 + 3600)
+    assert not watcher._events_partial
+
+
+def test_a_complete_refresh_is_cached_for_the_full_interval(config, store):
+    import dataclasses
+
+    cfg = dataclasses.replace(config, sports=("a",), events_refresh_seconds=86400)
+    api = FakeApi([EVENT], [])
+    watcher = Watcher(cfg, api, FakeTelegram(), store)
+
+    watcher.refresh_events(1000.0)
+    watcher.refresh_events(1000.0 + 3600)
+    assert api.event_calls == 1          # served from cache, as intended
+    assert not watcher._events_partial
