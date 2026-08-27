@@ -132,10 +132,27 @@ def _price(value: Any, odds_format: str = "american") -> Optional[float]:
     return number if number > 1 else None
 
 
+def event_id_of(raw: dict, default=None):
+    """The id that identifies a fixture across endpoints.
+
+    ParlayAPI answers with two: `id`, which differs between the events and
+    odds endpoints for the same fixture, and `canonical_event_id`, which does
+    not. Reading `id` on both sides yields two disjoint sets, so every price
+    is discarded for belonging to an unknown fixture -- prices arrive, nothing
+    is ever recorded, and the watcher looks like a quiet market.
+    """
+    return _first(
+        raw,
+        "canonical_event_id", "canonicalEventId",
+        "id", "event_id", "eventId", "game_id", "gameId",
+        default=default,
+    )
+
+
 def parse_event(raw: dict) -> Optional[Event]:
     if not isinstance(raw, dict):
         return None
-    event_id = _first(raw, "id", "event_id", "eventId", "game_id", "gameId")
+    event_id = event_id_of(raw)
     start_ts = parse_timestamp(
         _first(raw, "commence_time", "start_time", "startTime", "start", "date", "scheduled")
     )
@@ -277,7 +294,7 @@ def parse_quotes(
                     quotes.append(quote)
             continue
         event_id = str(
-            _first(block, "id", "event_id", "eventId", "game_id", default=default_event_id) or ""
+            event_id_of(block, default=default_event_id) or ""
         )
         if not event_id:
             continue
@@ -692,7 +709,7 @@ class ParlayApiClient:
         def _keep(block):
             if not isinstance(block, dict):
                 return False
-            block_id = str(_first(block, "id", "event_id", "eventId", "game_id", default="") or "")
+            block_id = str(event_id_of(block, default="") or "")
             return not wanted or block_id in wanted
 
         blocks = [b for b in _as_list(self._sport_odds(sport)) if _keep(b)]

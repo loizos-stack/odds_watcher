@@ -40,7 +40,9 @@ def test_live_event_parsing():
     events = [parse_event(raw) for raw in demo_payload()["events"]]
     assert events[0].name == "Arizona Diamondbacks vs Cincinnati Reds"
     assert events[0].sport_key == "baseball_mlb"
-    assert events[0].id == "d197ab11d19211f51b349da57e14539b"
+    # canonical_event_id, not `id`: the odds endpoint numbers the same fixture
+    # differently under `id`, and joining on it discards every price.
+    assert events[0].id == "4e1dce87d4d7034d"
     assert all(e.start_ts for e in events)
 
 
@@ -576,3 +578,59 @@ def test_an_empty_prop_sports_still_means_every_sport(monkeypatch):
                         lambda url, **kw: ([], {}))
     client = ParlayApiClient("k", prop_markets=("all",))
     assert client.wants_props("anything")
+
+
+def test_events_and_odds_agree_on_the_fixture_id():
+    """The two endpoints number the same fixture differently under `id`.
+
+    Reading `id` on both sides produced two disjoint id sets: prices came back
+    in their thousands and every one was discarded for belonging to an unknown
+    fixture. The join has to be on canonical_event_id.
+    """
+    import json
+    from pathlib import Path
+
+    from odds_watcher.parlayapi import parse_event, parse_quotes
+
+    payload = json.loads(
+        (Path(__file__).parent / "fixtures" / "parlay_api_demo.json").read_text()
+    )
+    blocks = payload["events"]
+
+    event_ids = {parse_event(block).id for block in blocks}
+    quote_ids = {quote.event_id for quote in parse_quotes(payload)}
+
+    assert quote_ids
+    assert quote_ids <= event_ids, "prices reference fixtures the event list does not have"
+    # And specifically: the stable id, not the per-endpoint one.
+    assert blocks[0]["canonical_event_id"] in event_ids
+    assert blocks[0]["id"] not in event_ids
+
+
+def test_a_payload_without_a_canonical_id_still_parses():
+    """Not every provider (or endpoint) supplies one."""
+    from odds_watcher.parlayapi import event_id_of
+
+    assert event_id_of({"canonical_event_id": "stable", "id": "volatile"}) == "stable"
+    assert event_id_of({"id": "volatile"}) == "volatile"
+    assert event_id_of({"event_id": "e1"}) == "e1"
+    assert event_id_of({}, default="fallback") == "fallback"
+
+
+def test_the_id_filter_matches_on_the_canonical_id(monkeypatch):
+    """`wanted` holds canonical ids, so the block filter must read the same field."""
+    import json
+    from pathlib import Path
+
+    payload = json.loads(
+        (Path(__file__).parent / "fixtures" / "parlay_api_demo.json").read_text()
+    )
+    canonical = payload["events"][0]["canonical_event_id"]
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers",
+                        lambda url, **kw: (payload, {}))
+    client = ParlayApiClient("k", featured_markets=("h2h",))
+    quotes = client.get_multi_odds([canonical], (), sport="baseball_mlb")
+
+    assert quotes, "asking for a fixture by its canonical id returned nothing"
+    assert {q.event_id for q in quotes} == {canonical}
