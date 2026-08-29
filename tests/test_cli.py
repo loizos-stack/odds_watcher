@@ -318,3 +318,68 @@ def test_preset_does_not_overwrite_a_deliberately_empty_setting(tmp_path, capsys
     written = cli._read_env_file(env)
     assert written["FEATURED_MARKETS"] == ""      # the preset turned it off
     assert written["ODDS_API_KEY"] == "k"         # the secret was carried over
+
+
+class PropSurveyApi(FakeApi):
+    """Publishes props for some sports and nothing for the rest."""
+
+    def __init__(self, catalogue):
+        super().__init__(sports=[(s, s.upper()) for s in catalogue])
+        self.catalogue = catalogue
+        self.asked = []
+
+    def prop_market_keys(self, sport):
+        self.asked.append(sport)
+        return [(k, k) for k in self.catalogue.get(sport, [])]
+
+
+def test_prop_sports_reports_only_the_sports_that_publish_props(config, wired, capsys):
+    """Most sports publish none, and each costs a request per poll to confirm."""
+    import dataclasses
+
+    api = wired(PropSurveyApi({
+        "baseball_mlb": ["batter_home_runs", "pitcher_strikeouts"],
+        "table_tennis": [],
+        "basketball_nba": ["player_points"],
+    }))
+    rc = cli.cmd_prop_sports(dataclasses.replace(config, sports=("all",)))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "2 of 3 sport(s) publish player props" in out
+    assert "PROP_SPORTS=baseball_mlb,basketball_nba" in out
+    assert "table_tennis" not in out.split("Paste into .env")[1]
+    assert api.asked == ["baseball_mlb", "table_tennis", "basketball_nba"]
+
+
+def test_prop_sports_says_so_when_the_provider_has_none(config, wired, capsys):
+    """A provider that serves no props at all is not a misconfiguration."""
+    import dataclasses
+
+    wired(PropSurveyApi({"table_tennis": [], "darts": []}))
+    cli.cmd_prop_sports(dataclasses.replace(config, sports=("all",)))
+
+    out = capsys.readouterr().out
+    assert "No sport in this listing publishes player props" in out
+    assert "PROP_SPORTS=" not in out
+
+
+def test_prop_sports_caches_what_it_finds(config, wired, tmp_path, monkeypatch):
+    """The survey is paid for once; the watcher reuses it."""
+    import dataclasses
+
+    from odds_watcher.parlayapi import PROP_KEYS_PREFIX
+    from odds_watcher.store import RequestBudget, Store
+
+    store = Store(tmp_path / "survey.db")
+    api = PropSurveyApi({"baseball_mlb": ["batter_home_runs"]})
+    monkeypatch.setattr(
+        cli, "_components",
+        lambda c: (store, RequestBudget(store, 100, 500), api, FakeTelegram()),
+    )
+    cli.cmd_prop_sports(dataclasses.replace(config, sports=("all",)))
+
+    reopened = Store(tmp_path / "survey.db")   # cmd_prop_sports closes its own
+    keys, _checked = reopened.get_market_keys(PROP_KEYS_PREFIX + "baseball_mlb", 86400)
+    assert keys == ["batter_home_runs"]
+    reopened.close()

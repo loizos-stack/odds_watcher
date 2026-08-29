@@ -47,6 +47,7 @@ REQUIRED_CREDENTIALS = {
     "movements": (),
     "verify": ("ODDS_API_KEY",),
     "preset": (),
+    "prop-sports": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -61,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "verify", "preset", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "verify", "prop-sports", "preset", "chat-id", "status"],
     )
     parser.add_argument(
         "--sport",
@@ -95,6 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--source",
         default=None,
         help="preset: the .env*.example to apply, keeping the values already set",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="prop-sports: survey only the first N sports",
     )
     parser.add_argument(
         "--wait",
@@ -911,6 +918,79 @@ def cmd_preset(source: Path, target: Path) -> int:
     return 0
 
 
+def cmd_prop_sports(config: Config, limit: Optional[int] = None) -> int:
+    """Survey which sports publish player props, and cache the answer.
+
+    Props cost a request per sport per poll, and across a listing of several
+    hundred sports most publish none at all. Asking each one once, here, is
+    cheaper than discovering it repeatedly in the poll loop -- and the result
+    is a PROP_SPORTS line that can be pasted straight into .env.
+    """
+    from .parlayapi import PROP_KEYS_PREFIX
+
+    store, budget, api, _ = _components(config)
+    if not hasattr(api, "prop_market_keys"):
+        print(f"{config.odds_provider} has no prop-market listing to survey",
+              file=sys.stderr)
+        store.close()
+        return 2
+
+    try:
+        if config.wants_all_sports:
+            sports = [key for key, _title in api.get_sports()]
+        else:
+            sports = list(config.sports)
+    except (TransportError, BudgetExceeded) as exc:
+        print(f"✗ could not list sports: {exc}", file=sys.stderr)
+        store.close()
+        return 1
+
+    if limit:
+        sports = sports[:limit]
+    print(f"asking {len(sports)} sport(s) which prop markets they publish "
+          f"(one request each)\n")
+
+    found: list = []
+    asked = 0
+    try:
+        for sport in sports:
+            try:
+                rows = api.prop_market_keys(sport)
+            except BudgetExceeded as exc:
+                print(f"\n! stopped after {asked}: {exc}", file=sys.stderr)
+                break
+            except TransportError:
+                rows = []          # a sport with no props answers 404 or empty
+            asked += 1
+            keys = [key for key, _title in rows]
+            if keys:
+                found.append((sport, keys))
+                print(f"  {sport:<44} {len(keys):>4} market(s)")
+                try:
+                    store.save_market_keys(
+                        PROP_KEYS_PREFIX + sport, {key: True for key in keys}
+                    )
+                except Exception:
+                    log.debug("could not cache prop keys for %s", sport, exc_info=True)
+    finally:
+        hour, day = budget.remaining()
+
+    print(f"\n{len(found)} of {asked} sport(s) publish player props "
+          f"({asked} request(s) spent, {hour}/hour {day}/day left)")
+    if found:
+        print("\nPaste into .env:\n")
+        print("PROP_MARKETS=all")
+        print("PROP_SPORTS=" + ",".join(sport for sport, _keys in found))
+        print("\nThe market keys are cached, so the watcher will not re-ask "
+              f"for {config.market_keys_ttl_seconds // 86400} day(s).")
+    else:
+        print("\nNo sport in this listing publishes player props. That is a "
+              "property of\nthe account or provider, not of the configuration "
+              "-- leave PROP_MARKETS empty.")
+    store.close()
+    return 0
+
+
 def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = False) -> int:
     store, budget, _, _ = _components(config)
     if reset:
@@ -1477,6 +1557,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_movements(config)
     if args.command == "verify":
         return cmd_verify(config, args.wait)
+    if args.command == "prop-sports":
+        return cmd_prop_sports(config, args.limit)
     if args.command == "usage":
         return cmd_usage(config, args.check_balance)
     if args.command == "status":
