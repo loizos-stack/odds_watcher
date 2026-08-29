@@ -837,8 +837,42 @@ class ParlayApiClient:
         return blocks
 
     # -- interface parity -------------------------------------------------
+    def wanted_markets(self) -> tuple:
+        """Market keys explicitly asked for, or () when anything is acceptable."""
+        keys = [
+            m.strip().lower()
+            for m in tuple(self.featured_markets) + tuple(self.prop_markets)
+            if m.strip()
+        ]
+        if any(k in ("all", "*") for k in keys):
+            return ()
+        return tuple(dict.fromkeys(keys))
+
+    def market_wanted(self, market: str) -> bool:
+        """Whether a returned market is one that was asked for.
+
+        Naming markets in the request is not enough: the props endpoint
+        answers with the event's other markets too, so a moneyline arrives in
+        a reply to a request for strikeouts. Filtering here means the setting
+        that says which markets to watch is the one that decides.
+        """
+        wanted = self.wanted_markets()
+        if not wanted:
+            return True
+        name = market.strip().lower().replace(" ", "_").replace("-", "_")
+        return any(key == name or key in name for key in wanted)
+
     def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = "") -> list:
-        return self.parse_quotes(self.get_odds_payloads(event_ids, bookmakers, sport=sport))
+        quotes = self.parse_quotes(self.get_odds_payloads(event_ids, bookmakers, sport=sport))
+        if not self.wanted_markets():
+            return quotes
+        kept = [q for q in quotes if self.market_wanted(q.market)]
+        if len(kept) != len(quotes):
+            log.debug(
+                "%s: dropped %d price(s) in markets that were not requested",
+                sport, len(quotes) - len(kept),
+            )
+        return kept
 
     def get_event_odds(self, event_id: str, bookmakers: Sequence[str], *, sport: str = "") -> list:
         return self.parse_quotes(

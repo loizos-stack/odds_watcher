@@ -779,3 +779,53 @@ def test_a_short_prop_list_is_sent_whole(monkeypatch):
     assert _fit_markets(keys, 1600) == keys
     assert _fit_markets(keys, 20) == ("player_strikeouts",)
     assert _fit_markets(keys, 5) == ()
+
+
+def test_markets_that_were_not_asked_for_are_dropped(monkeypatch):
+    """The props endpoint returns the event's other markets too."""
+    payload = {"events": [{
+        "id": "x", "canonical_event_id": "c1",
+        "commence_time": "2026-08-30T00:00:00Z",
+        "home_team": "Yankees", "away_team": "Astros",
+        "bookmakers": [{"key": "bet365", "markets": [
+            {"key": "moneyline", "outcomes": [{"name": "Yankees", "price": -110}]},
+            {"key": "totals", "outcomes": [{"name": "Over", "price": -105}]},
+            {"key": "player_strikeouts",
+             "outcomes": [{"name": "Gerrit Cole Over", "price": -110}]},
+            {"key": "player_hits_allowed",
+             "outcomes": [{"name": "Gerrit Cole Under", "price": -120}]},
+        ]}],
+    }]}
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers",
+                        lambda url, **kw: (payload, {}))
+    client = ParlayApiClient(
+        "k", featured_markets=(),
+        prop_markets=("player_strikeouts", "player_hits", "player_hits_allowed"),
+    )
+    markets = {q.market for q in client.get_multi_odds([], (), sport="baseball_mlb")}
+
+    assert markets == {"player_strikeouts", "player_hits_allowed"}
+    assert "moneyline" not in markets and "totals" not in markets
+
+
+def test_all_still_means_all(monkeypatch):
+    payload = {"events": [{
+        "id": "x", "canonical_event_id": "c1",
+        "commence_time": "2026-08-30T00:00:00Z",
+        "home_team": "A", "away_team": "B",
+        "bookmakers": [{"key": "bet365", "markets": [
+            {"key": "moneyline", "outcomes": [{"name": "A", "price": -110}]},
+        ]}],
+    }]}
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers",
+                        lambda url, **kw: (payload, {}))
+    client = ParlayApiClient("k", featured_markets=("all",))
+    assert client.get_multi_odds([], (), sport="baseball_mlb")
+
+
+def test_market_matching_tolerates_spacing_and_case():
+    client = ParlayApiClient("k", featured_markets=(),
+                             prop_markets=("player_strikeouts",))
+    assert client.market_wanted("Player Strikeouts")
+    assert client.market_wanted("player_strikeouts")
+    assert not client.market_wanted("moneyline")
