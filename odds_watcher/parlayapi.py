@@ -36,6 +36,8 @@ BASE_URL = "https://parlay-api.com"
 GLOBAL_MARKET_KEYS = "__parlay_game_markets__"
 # Sports recorded here answered the props endpoint with nothing.
 NO_PROPS_KEY = "__parlay_sports_without_props__"
+# Per-sport prop market keys, cached under a prefix no sport can collide with.
+PROP_KEYS_PREFIX = "__parlay_props__"
 CORE_GAME_MARKETS = ("h2h", "spreads", "totals")
 
 
@@ -713,12 +715,42 @@ class ParlayApiClient:
             return False
         return not self._has_no_props(sport)
 
+    def _prop_market_keys_for(self, sport: str) -> tuple:
+        """The prop keys to ask for. "all" is not one of them.
+
+        This API rejects or ignores a request that does not name its markets --
+        the game-markets endpoint answers with h2h only, and the props endpoint
+        answers with nothing at all. It publishes the valid keys per sport, so
+        "all" is resolved against that listing and remembered.
+        """
+        explicit = tuple(
+            m for m in self.prop_markets if m.strip().lower() not in ("all", "*")
+        )
+        if explicit:
+            return explicit
+        cache_key = PROP_KEYS_PREFIX + sport
+        cached = self._cached_keys(cache_key)
+        if cached:
+            return cached
+        try:
+            keys = tuple(key for key, _title in self.prop_market_keys(sport))
+        except HttpError as exc:
+            log.warning("no prop market listing for %s: %s", sport, exc)
+            return ()
+        if keys:
+            self._remember_keys(cache_key, keys)
+            log.info("%s offers %d prop market(s)", sport, len(keys))
+        return keys
+
     def _sport_props(self, sport: str) -> Any:
         """Player props, which arrive as flat rows rather than nested markets."""
-        params = {"oddsFormat": self.odds_format}
-        explicit = [m for m in self.prop_markets if m.strip().lower() not in ("all", "*")]
-        if explicit:
-            params["markets"] = ",".join(explicit)
+        markets = self._prop_market_keys_for(sport)
+        if not markets:
+            # The sport publishes no prop markets, so asking for prices is a
+            # request spent on a guaranteed empty answer.
+            self._remember_no_props(sport)
+            return []
+        params = {"oddsFormat": self.odds_format, "markets": ",".join(markets)}
         if self.bookmakers:
             params["bookmakers"] = ",".join(self.bookmakers)
         return self._call(f"v1/sports/{sport}/props", params)

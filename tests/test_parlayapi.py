@@ -197,7 +197,10 @@ def test_endpoint_paths(monkeypatch):
     assert "/v1/sports/baseball_mlb/odds?" in calls[1]
     # Without an explicit markets list the API returns h2h only.
     assert "markets=h2h%2Cspreads%2Ctotals" in calls[1]
-    assert "/v1/sports/baseball_mlb/props?" in calls[2]
+    # "all" is resolved against the sport's own prop listing before any
+    # price request; an empty listing means no price request at all.
+    assert calls[2].endswith("/v1/sports/baseball_mlb/props/markets")
+    assert len(calls) == 3
 
 
 def test_sports_listing_unwraps_its_envelope(monkeypatch):
@@ -695,3 +698,47 @@ def test_a_props_error_also_marks_the_sport(monkeypatch, tmp_path):
     client.get_odds_payloads([], (), sport="darts")
     assert not client.wants_props("darts")
     store.close()
+
+
+def test_prop_prices_name_the_keys_the_sport_publishes(monkeypatch, tmp_path):
+    """Omitting `markets` is why the props endpoint answered with nothing."""
+    from odds_watcher.store import Store
+
+    store = Store(tmp_path / "propkeys.db")
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        if url.endswith("/props/markets"):
+            return [{"key": "batter_home_runs", "title": "Home runs"},
+                    {"key": "pitcher_strikeouts", "title": "Strikeouts"}], {}
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", featured_markets=(), prop_markets=("all",),
+                             market_cache=store)
+    client.get_odds_payloads([], (), sport="baseball_mlb")
+
+    price_calls = [u for u in calls if "/props?" in u]
+    assert len(price_calls) == 1
+    assert "markets=batter_home_runs%2Cpitcher_strikeouts" in price_calls[0]
+
+    # The listing is bought once, not once per poll.
+    calls.clear()
+    client.get_odds_payloads([], (), sport="baseball_mlb")
+    assert not any(u.endswith("/props/markets") for u in calls)
+    store.close()
+
+
+def test_an_explicit_prop_list_skips_the_listing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "odds_watcher.parlayapi.request_json_with_headers",
+        lambda url, **kw: (calls.append(url), ([], {}))[1],
+    )
+    client = ParlayApiClient("k", featured_markets=(),
+                             prop_markets=("pitcher_strikeouts",))
+    client.get_odds_payloads([], (), sport="baseball_mlb")
+
+    assert not any(u.endswith("/props/markets") for u in calls)
+    assert "markets=pitcher_strikeouts" in calls[0]
