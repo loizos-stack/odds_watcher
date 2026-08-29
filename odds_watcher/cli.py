@@ -871,7 +871,10 @@ def cmd_preset(source: Path, target: Path) -> int:
         key, _, value = stripped.partition("=")
         key = key.strip()
         named.add(key)
-        if not value.strip() and existing.get(key):
+        # An empty CREDENTIAL means "not filled in yet" and should be carried
+        # over. An empty setting means "off" and is the preset's intent -- so
+        # carrying the old value across silently changes what the preset does.
+        if key in ALL_CREDENTIALS and not value.strip() and existing.get(key):
             lines.append(f"{key}={existing[key]}")
             carried.append(key)
         else:

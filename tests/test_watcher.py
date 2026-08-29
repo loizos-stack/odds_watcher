@@ -1164,7 +1164,10 @@ def test_fixtures_in_range_with_no_prices_is_called_out(config, store, caplog):
         watcher.poll_once(at(20))
 
     assert "no prices came back" in caplog.text
-    assert "not an error" in caplog.text
+    # The sports must be named: an unpriced sport and a broken request are
+    # indistinguishable until you can see which sports were asked about.
+    assert "football" in caplog.text
+    assert "bet365" in caplog.text
 
 
 def test_a_poll_with_nothing_in_range_stays_quiet(config, store, caplog):

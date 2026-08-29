@@ -241,11 +241,16 @@ class Watcher:
             self.config.min_drop_pct,
         )
         if events and not priced:
+            # Name them: an unpriced sport and a broken request look identical
+            # until you can see that the sports in range are ones your books
+            # do not cover.
             log.warning(
-                "no prices came back for %d fixture(s) in range — check BOOKMAKERS "
-                "and FEATURED_MARKETS: a key the provider does not price returns "
-                "an empty payload, not an error",
+                "no prices came back for %d fixture(s) in range across: %s — "
+                "either %s do not price these sports, or the request is wrong. "
+                "`verify --sport <one of them>` says which",
                 len(events),
+                ", ".join(sorted(by_sport)[:12]),
+                " / ".join(self.config.bookmakers),
             )
 
         self.store.purge(now - STATE_RETENTION_SECONDS)

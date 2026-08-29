@@ -302,3 +302,19 @@ def test_verify_separates_an_empty_provider_from_a_mismatch(config, wired, capsy
     assert "even with no event filter" in err
     assert "request-shape problem" in err
     assert "do not match" not in err
+
+
+def test_preset_does_not_overwrite_a_deliberately_empty_setting(tmp_path, capsys):
+    """An empty setting means "off"; only an empty credential means "unfilled"."""
+    env = tmp_path / ".env"
+    env.write_text("ODDS_API_KEY=k\nTELEGRAM_BOT_TOKEN=t\nTELEGRAM_CHAT_ID=1\n"
+                   "FEATURED_MARKETS=all\n")
+    source = tmp_path / "props-only.example"
+    source.write_text("FEATURED_MARKETS=\nPROP_MARKETS=all\n"
+                      "ODDS_API_KEY=\nTELEGRAM_BOT_TOKEN=\nTELEGRAM_CHAT_ID=\n")
+
+    cli.cmd_preset(source, env)
+
+    written = cli._read_env_file(env)
+    assert written["FEATURED_MARKETS"] == ""      # the preset turned it off
+    assert written["ODDS_API_KEY"] == "k"         # the secret was carried over
