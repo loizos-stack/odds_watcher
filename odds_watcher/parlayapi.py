@@ -38,7 +38,28 @@ GLOBAL_MARKET_KEYS = "__parlay_game_markets__"
 NO_PROPS_KEY = "__parlay_sports_without_props__"
 # Per-sport prop market keys, cached under a prefix no sport can collide with.
 PROP_KEYS_PREFIX = "__parlay_props__"
+# Longest query string the provider's nginx will accept. A sport can
+# publish thousands of prop keys -- one per player per stat -- and naming
+# them all produces a URL of tens of kilobytes, rejected with HTTP 414.
+MAX_MARKET_PARAM_CHARS = 1600
 CORE_GAME_MARKETS = ("h2h", "spreads", "totals")
+
+
+def _fit_markets(markets: Sequence[str], budget: int) -> tuple:
+    """As many market keys as fit in a query parameter of `budget` characters.
+
+    Truncating loses markets, which is bad; sending them all loses the whole
+    request to a 414, which is worse.
+    """
+    kept: list = []
+    used = 0
+    for key in markets:
+        cost = len(key) + (1 if kept else 0)
+        if used + cost > budget:
+            break
+        kept.append(key)
+        used += cost
+    return tuple(kept)
 
 
 def is_market_error(message: str) -> bool:
@@ -372,6 +393,7 @@ class ParlayApiClient:
         self.prop_markets = tuple(prop_markets)
         self.prop_sports = tuple(prop_sports)
         self._sports_without_props: set = set()
+        self._warned_truncated: set = set()
         self.regions = tuple(regions)
         self.featured_markets = tuple(featured_markets)
         self.bookmakers = tuple(bookmakers)
@@ -750,7 +772,17 @@ class ParlayApiClient:
             # request spent on a guaranteed empty answer.
             self._remember_no_props(sport)
             return []
-        params = {"oddsFormat": self.odds_format, "markets": ",".join(markets)}
+        asked = _fit_markets(markets, MAX_MARKET_PARAM_CHARS)
+        if len(asked) < len(markets) and sport not in self._warned_truncated:
+            self._warned_truncated.add(sport)
+            log.warning(
+                "%s publishes %d prop markets; asking for the first %d. The rest "
+                "would exceed the provider's URL limit. Set PROP_MARKETS to the "
+                "keys you actually want (e.g. player_strikeouts,player_hits) "
+                "instead of 'all'.",
+                sport, len(markets), len(asked),
+            )
+        params = {"oddsFormat": self.odds_format, "markets": ",".join(asked)}
         if self.bookmakers:
             params["bookmakers"] = ",".join(self.bookmakers)
         return self._call(f"v1/sports/{sport}/props", params)

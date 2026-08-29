@@ -742,3 +742,40 @@ def test_an_explicit_prop_list_skips_the_listing(monkeypatch):
 
     assert not any(u.endswith("/props/markets") for u in calls)
     assert "markets=pitcher_strikeouts" in calls[0]
+
+
+def test_a_huge_prop_market_list_is_trimmed_to_fit_the_url(monkeypatch, caplog):
+    """A sport can publish thousands of keys; naming them all is HTTP 414."""
+    import logging
+
+    from odds_watcher.parlayapi import MAX_MARKET_PARAM_CHARS
+
+    keys = [f"player_{name}_to_record_{n}_bases" for name in
+            ("aaronjudge", "mookiebetts", "shoheiohtani") for n in range(200)]
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        if url.endswith("/props/markets"):
+            return [{"key": k} for k in keys], {}
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", featured_markets=(), prop_markets=("all",))
+    with caplog.at_level(logging.WARNING):
+        client.get_odds_payloads([], (), sport="baseball_mlb")
+
+    price_call = [u for u in calls if "/props?" in u][0]
+    asked = price_call.split("markets=")[1].split("&")[0]
+    assert len(asked) <= MAX_MARKET_PARAM_CHARS * 3   # allowing for %-encoding
+    assert "publishes 600 prop markets" in caplog.text
+    assert "Set PROP_MARKETS to the keys you actually want" in caplog.text
+
+
+def test_a_short_prop_list_is_sent_whole(monkeypatch):
+    from odds_watcher.parlayapi import _fit_markets
+
+    keys = ("player_strikeouts", "player_hits", "player_home_runs")
+    assert _fit_markets(keys, 1600) == keys
+    assert _fit_markets(keys, 20) == ("player_strikeouts",)
+    assert _fit_markets(keys, 5) == ()

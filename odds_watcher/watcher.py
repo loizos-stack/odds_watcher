@@ -221,9 +221,14 @@ class Watcher:
                 log.error("odds request failed: %s", exc)
 
         alerts: list[Alert] = []
+        orphaned = 0
         for event_id, quotes in quotes_by_event.items():
             event = by_id.get(event_id)
             if event is None:
+                # A price for a fixture the list does not contain cannot be
+                # timed against a kick-off, so it is dropped -- silently, until
+                # now. This is what an id mismatch looks like from inside.
+                orphaned += len(quotes)
                 continue
             alerts.extend(self.detector.process(event, quotes, now))
 
@@ -233,6 +238,12 @@ class Watcher:
         # A poll that finds nothing logs nothing, so a healthy watcher and a
         # stuck one read the same in the journal. Say what was looked at.
         priced = sum(len(q) for q in quotes_by_event.values())
+        if orphaned:
+            log.warning(
+                "%d of %d price(s) belong to fixtures not in the list and were "
+                "dropped; %d price(s) were usable",
+                orphaned, priced, priced - orphaned,
+            )
         log.info(
             "polled %d sport(s), %d fixture(s): %d price(s), %d line(s) tracked, "
             "%d drop(s) >= %.1f%%",

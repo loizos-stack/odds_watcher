@@ -1221,3 +1221,19 @@ def test_the_same_sports_still_reuse_the_cache(config, tmp_path):
     watcher.refresh_events(1060.0)
     assert api.event_calls == 0
     store2.close()
+
+
+def test_prices_for_unknown_fixtures_are_reported_not_swallowed(config, store, caplog):
+    """A price with no matching fixture cannot be timed, and used to vanish."""
+    import logging
+
+    from odds_watcher.odds_api import Quote
+
+    stray = Quote("not-in-the-list", "bet365", "h2h", "", "Home", 2.0)
+    api = FakeApi([EVENT], [[quote(2.00), stray]])
+    watcher = Watcher(config, api, FakeTelegram(), store)
+    with caplog.at_level(logging.WARNING):
+        watcher.poll_once(at(20))
+
+    assert "1 of 2 price(s) belong to fixtures not in the list" in caplog.text
+    assert "1 price(s) were usable" in caplog.text
