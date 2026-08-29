@@ -62,7 +62,10 @@ class Watcher:
         # Carry the fixture list across restarts: re-listing every sport is
         # one request each, and repaying that on every restart is the single
         # most expensive thing this daemon can do.
-        self._events, self._events_fetched_at, self._events_partial = store.load_fixtures()
+        self._scope = "|".join((",".join(config.sports), ",".join(config.leagues)))
+        self._events, self._events_fetched_at, self._events_partial = store.load_fixtures(
+            self._scope
+        )
         if self._events:
             log.info(
                 "restored %d fixture(s) from %s, last refreshed %s ago%s",
@@ -118,7 +121,7 @@ class Watcher:
             self._events = sorted(events.values(), key=lambda e: e.start_ts)
             self._events_fetched_at = now
             self._events_partial = partial
-            self.store.save_fixtures(self._events, now, partial=partial)
+            self.store.save_fixtures(self._events, now, partial=partial, scope=self._scope)
             if partial:
                 log.error(
                     "fixture list is INCOMPLETE: %d event(s) from %d of %d sport(s) — the "

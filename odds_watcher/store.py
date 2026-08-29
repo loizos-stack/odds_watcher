@@ -285,7 +285,7 @@ class Store:
         return self.conn.execute("SELECT COUNT(*) FROM line_state").fetchone()[0]
 
     # -- the fixture list --------------------------------------------------
-    def save_fixtures(self, events, now: float, *, partial: bool) -> None:
+    def save_fixtures(self, events, now: float, *, partial: bool, scope: str = "") -> None:
         """Persist the fixture list so a restart does not re-buy it.
 
         Listing every sport is one request each -- hundreds in a burst. Held
@@ -305,11 +305,12 @@ class Store:
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             [("fixtures_fetched_at", repr(float(now))),
              ("fixtures_partial", "1" if partial else "0"),
-             ("fixtures_version", FIXTURE_CACHE_VERSION)],
+             ("fixtures_version", FIXTURE_CACHE_VERSION),
+             ("fixtures_scope", scope)],
         )
         self.conn.commit()
 
-    def load_fixtures(self):
+    def load_fixtures(self, scope: str = ""):
         """``(events, fetched_at, partial)`` from the last run, or ``([], 0, False)``."""
         from .odds_api import Event
 
@@ -329,6 +330,13 @@ class Store:
             log.warning(
                 "cached fixture list was written by an older parser; "
                 "re-fetching rather than matching prices against stale ids"
+            )
+            return [], 0.0, False
+        if meta.get("fixtures_scope", "") != scope:
+            # SPORTS or LEAGUES changed. Keeping this list would poll sports
+            # that are no longer configured and miss ones that now are.
+            log.info(
+                "cached fixture list was for a different SPORTS/LEAGUES; re-fetching"
             )
             return [], 0.0, False
         try:

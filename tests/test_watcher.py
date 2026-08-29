@@ -1111,7 +1111,8 @@ def test_a_restored_partial_list_still_retries_soon(config, tmp_path):
     cfg = dataclasses.replace(config, db_path=tmp_path / "partial.db",
                               events_refresh_seconds=86400)
     store = Store(cfg.db_path)
-    store.save_fixtures([EVENT], 1000.0, partial=True)
+    scope = "|".join((",".join(cfg.sports), ",".join(cfg.leagues)))
+    store.save_fixtures([EVENT], 1000.0, partial=True, scope=scope)
     store.close()
 
     store2 = Store(cfg.db_path)
@@ -1177,3 +1178,46 @@ def test_a_poll_with_nothing_in_range_stays_quiet(config, store, caplog):
     with caplog.at_level(logging.INFO):
         watcher.poll_once(at(600))
     assert "polled" not in caplog.text
+
+
+def test_changing_sports_invalidates_the_cached_fixture_list(config, tmp_path):
+    """Otherwise it keeps polling sports you removed and misses ones you added."""
+    import dataclasses
+
+    from odds_watcher.store import Store
+
+    db = tmp_path / "scope.db"
+    wide = dataclasses.replace(config, sports=("a", "b", "c"), db_path=db,
+                               events_refresh_seconds=86400)
+    store = Store(db)
+    Watcher(wide, FakeApi([EVENT], []), FakeTelegram(), store).refresh_events(1000.0)
+    store.close()
+
+    narrow = dataclasses.replace(wide, sports=("a",))
+    store2 = Store(db)
+    api = FakeApi([EVENT], [])
+    watcher = Watcher(narrow, api, FakeTelegram(), store2, clock=lambda: 1060.0)
+    assert watcher._events == []             # not reused across a scope change
+    watcher.refresh_events(1060.0)
+    assert api.event_calls == 1
+    store2.close()
+
+
+def test_the_same_sports_still_reuse_the_cache(config, tmp_path):
+    import dataclasses
+
+    from odds_watcher.store import Store
+
+    db = tmp_path / "samescope.db"
+    cfg = dataclasses.replace(config, sports=("a", "b"), db_path=db,
+                              events_refresh_seconds=86400)
+    store = Store(db)
+    Watcher(cfg, FakeApi([EVENT], []), FakeTelegram(), store).refresh_events(1000.0)
+    store.close()
+
+    store2 = Store(db)
+    api = FakeApi([EVENT], [])
+    watcher = Watcher(cfg, api, FakeTelegram(), store2, clock=lambda: 1060.0)
+    watcher.refresh_events(1060.0)
+    assert api.event_calls == 0
+    store2.close()
