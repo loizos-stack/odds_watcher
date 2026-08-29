@@ -34,6 +34,8 @@ BASE_URL = "https://parlay-api.com"
 # The valid-market list is global to the API, not per sport, so it is
 # cached under a key no sport slug can collide with.
 GLOBAL_MARKET_KEYS = "__parlay_game_markets__"
+# Sports recorded here answered the props endpoint with nothing.
+NO_PROPS_KEY = "__parlay_sports_without_props__"
 CORE_GAME_MARKETS = ("h2h", "spreads", "totals")
 
 
@@ -367,6 +369,7 @@ class ParlayApiClient:
         self.budget = budget
         self.prop_markets = tuple(prop_markets)
         self.prop_sports = tuple(prop_sports)
+        self._sports_without_props: set = set()
         self.regions = tuple(regions)
         self.featured_markets = tuple(featured_markets)
         self.bookmakers = tuple(bookmakers)
@@ -658,6 +661,45 @@ class ParlayApiClient:
                 self._remember_keys(sport, markets)
         return payload
 
+    def _remember_no_props(self, sport: str) -> None:
+        """Record that a sport offers no props, so it is not asked again.
+
+        Across a wide SPORTS list most sports have no player props at all, and
+        each one costs a request per poll to be told so.
+        """
+        self._sports_without_props.add(sport)
+        if self.market_cache is None:
+            return
+        try:
+            self.market_cache.save_market_keys(NO_PROPS_KEY, {sport: False})
+        except Exception:
+            log.debug("could not persist the no-props marker for %s", sport, exc_info=True)
+
+    def _has_no_props(self, sport: str) -> bool:
+        if sport in self._sports_without_props:
+            return True
+        if self.market_cache is None:
+            return False
+        try:
+            _usable, checked_at = self.market_cache.get_market_keys(
+                NO_PROPS_KEY, self.market_keys_ttl
+            )
+        except Exception:
+            return False
+        if checked_at is None:
+            return False
+        try:
+            rows = self.market_cache.conn.execute(
+                "SELECT ok FROM market_keys WHERE sport = ? AND key = ?",
+                (NO_PROPS_KEY, sport),
+            ).fetchone()
+        except Exception:
+            return False
+        if rows is not None and not rows["ok"]:
+            self._sports_without_props.add(sport)
+            return True
+        return False
+
     def wants_props(self, sport: str) -> bool:
         """Whether to spend the second request of the poll on this sport.
 
@@ -667,9 +709,9 @@ class ParlayApiClient:
         """
         if not self.prop_markets:
             return False
-        if not self.prop_sports:
-            return True
-        return sport in self.prop_sports
+        if self.prop_sports and sport not in self.prop_sports:
+            return False
+        return not self._has_no_props(sport)
 
     def _sport_props(self, sport: str) -> Any:
         """Player props, which arrive as flat rows rather than nested markets."""
@@ -712,12 +754,22 @@ class ParlayApiClient:
             block_id = str(event_id_of(block, default="") or "")
             return not wanted or block_id in wanted
 
-        blocks = [b for b in _as_list(self._sport_odds(sport)) if _keep(b)]
+        blocks: list = []
+        if self.featured_markets:
+            blocks += [b for b in _as_list(self._sport_odds(sport)) if _keep(b)]
         if self.wants_props(sport):
             try:
-                blocks.extend(b for b in _as_list(self._sport_props(sport)) if _keep(b))
+                rows = _as_list(self._sport_props(sport))
             except HttpError as exc:
                 log.warning("props unavailable for %s: %s", sport, exc)
+                self._remember_no_props(sport)
+            else:
+                kept = [b for b in rows if _keep(b)]
+                if not rows:
+                    # This sport offers no props at all. Asking again every
+                    # poll is a request per poll for an empty answer.
+                    self._remember_no_props(sport)
+                blocks += kept
         return blocks
 
     # -- interface parity -------------------------------------------------

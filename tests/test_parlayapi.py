@@ -634,3 +634,64 @@ def test_the_id_filter_matches_on_the_canonical_id(monkeypatch):
 
     assert quotes, "asking for a fixture by its canonical id returned nothing"
     assert {q.event_id for q in quotes} == {canonical}
+
+
+def test_no_featured_markets_means_no_game_markets_request(monkeypatch):
+    """Props only: the game-markets call is a request bought for nothing."""
+    asked = []
+
+    def fake(url, **kw):
+        asked.append(url)
+        return [{"id": "e1", "canonical_event_id": "c1", "bookmakers": []}], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", featured_markets=(), prop_markets=("all",))
+    client.get_odds_payloads([], (), sport="baseball_mlb")
+
+    assert len(asked) == 1
+    assert "/props" in asked[0]
+    assert not any(u.endswith("/odds") or "/odds?" in u for u in asked)
+
+
+def test_a_sport_with_no_props_is_not_asked_again(monkeypatch, tmp_path):
+    """Most sports have no props; each costs a request per poll to confirm."""
+    from odds_watcher.store import Store
+
+    store = Store(tmp_path / "noprops.db")
+    asked = []
+
+    def fake(url, **kw):
+        asked.append(url)
+        return [], {}
+
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers", fake)
+    client = ParlayApiClient("k", featured_markets=(), prop_markets=("all",),
+                             market_cache=store)
+
+    client.get_odds_payloads([], (), sport="table_tennis")
+    assert len(asked) == 1
+    client.get_odds_payloads([], (), sport="table_tennis")
+    assert len(asked) == 1, "asked a second time for a sport known to have none"
+
+    # And it survives a restart.
+    fresh = ParlayApiClient("k", featured_markets=(), prop_markets=("all",),
+                            market_cache=store)
+    assert not fresh.wants_props("table_tennis")
+    assert fresh.wants_props("baseball_mlb")
+    store.close()
+
+
+def test_a_props_error_also_marks_the_sport(monkeypatch, tmp_path):
+    from odds_watcher.http import HttpError
+    from odds_watcher.store import Store
+
+    store = Store(tmp_path / "err.db")
+    monkeypatch.setattr(
+        "odds_watcher.parlayapi.request_json_with_headers",
+        lambda url, **kw: (_ for _ in ()).throw(HttpError(404, "no props", url)),
+    )
+    client = ParlayApiClient("k", featured_markets=(), prop_markets=("all",),
+                             market_cache=store)
+    client.get_odds_payloads([], (), sport="darts")
+    assert not client.wants_props("darts")
+    store.close()
