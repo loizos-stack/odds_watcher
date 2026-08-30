@@ -130,10 +130,13 @@ def sport_line(event) -> str:
 
 
 def humanize_market(market: str) -> str:
-    """"player_batter_walks" -> "Batter Walks"."""
+    """"player_batter_walks" and "Player Batter Walks" -> "Batter Walks"."""
     name = market.strip()
-    if name.lower().startswith("player_"):
-        name = name[len("player_"):]
+    low = name.lower()
+    for prefix in ("player_", "player "):
+        if low.startswith(prefix):
+            name = name[len(prefix):]
+            break
     return name.replace("_", " ").replace("-", " ").title() or market
 
 
@@ -159,22 +162,16 @@ def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") ->
     """Render one drop in the update layout: heading, fixture, opening, move, fair."""
     quote = alert.quote
     event = alert.event
-    is_prop = quote.market.strip().lower().startswith("player_")
+    line = format_line(quote.line)
 
     player, side = split_prop_outcome(quote.outcome)
-    if not is_prop:
+    if player:
+        # A named player -> the player-prop layout, whatever the market label.
+        label = f"Player Props - {_esc(player)} ({_esc(humanize_market(quote.market))})"
+    else:
         side = outcome_label(quote, event)
         if side.strip().lower() in _SIDE_WORDS:
             side = side.strip().title()
-        player = ""
-    line = format_line(quote.line)
-
-    if is_prop:
-        label = "Player Props"
-        if player:
-            label += f" - {_esc(player)}"
-        label += f" ({_esc(humanize_market(quote.market))})"
-    else:
         label = _esc(humanize_market(quote.market))
 
     heading = "🔁 <b>Odds update" if alert.is_repeat else "🟡 <b>Odds update"
