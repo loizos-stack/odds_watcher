@@ -26,38 +26,54 @@ def alert(**overrides):
 
 def test_format_alert_contains_the_essentials():
     text = format_alert(alert())
-    assert "BET365" in text
+    assert "Odds update on Bet365" in text
     assert "Ajax &lt;A&gt; vs PSV" in text  # user data is HTML-escaped
-    assert "5m 04s" in text
-    assert "2.00" in text and "1.80" in text and "Drop: <b>10.00%</b>" in text
+    assert "Football - Eredivisie" in text
+    assert "1.80" in text and "[-10.0%]" in text
+
+
+def test_a_prop_alert_reads_as_the_template():
+    """Player, humanised market, line, side, new price and drop, then fair."""
+    a = alert(
+        quote=Quote("e1", "draftkings", "player_batter_walks", "0.5", "Coby Mayo Under", 1.47),
+        reference_odds=1.70,
+        drop_pct=13.6,
+        opening_odds=1.60,
+        fair_odds=1.546,
+    )
+    text = format_alert(a, odds_format="decimal")
+    assert "Odds update on DraftKings" in text
+    assert "🟢 Opening (+0.5): Under 1.600" in text
+    assert "Player Props - Coby Mayo (Batter Walks) (+0.5): Under <b>1.470</b> ↓ [-13.6%]" in text
+    assert "🎯 Fair Odds: 1.546" in text
 
 
 def test_alert_names_the_team_not_the_side():
     """The API says "home"; a phone notification should say who that is."""
-    home = format_alert(alert(quote=Quote("e1", "bet365", "ML", "", "home", 1.42)))
-    assert "Ajax &lt;A&gt;" in home.split("Market:")[1]
+    home = format_alert(alert(quote=Quote("e1", "bet365", "h2h", "", "home", 1.42)))
+    assert "Ajax &lt;A&gt;" in home
 
-    away = format_alert(alert(quote=Quote("e1", "bet365", "ML", "", "away", 6.5)))
-    assert "PSV" in away.split("Market:")[1]
+    away = format_alert(alert(quote=Quote("e1", "bet365", "h2h", "", "away", 6.5)))
+    assert "PSV" in away
 
-    draw = format_alert(alert(quote=Quote("e1", "bet365", "ML", "", "draw", 3.9)))
-    assert "Draw" in draw.split("Market:")[1]
+    draw = format_alert(alert(quote=Quote("e1", "bet365", "h2h", "", "draw", 3.9)))
+    assert "Draw" in draw
 
 
 def test_alert_keeps_the_handicap_line_and_named_outcomes():
     text = format_alert(alert(quote=Quote("e1", "bet365", "Totals", "2.5", "over", 1.95)))
-    assert "Totals 2.5" in text
-    assert "over" in text
+    assert "(+2.5)" in text
+    assert "Over" in text
 
 
 def test_repeat_alerts_are_labelled():
-    assert "continuing" in format_alert(alert(repeat=True))
+    assert "🔁" in format_alert(alert(repeat=True))
 
 
 def test_digest_joins_multiple_alerts():
-    text = format_digest([alert(), alert(quote=Quote("e1", "betano", "moneyline", "", "Away", 3.1))])
-    assert text.count("Odds drop") == 2
-    assert "BETANO" in text
+    text = format_digest([alert(), alert(quote=Quote("e1", "betano", "h2h", "", "Away", 3.1))])
+    assert text.count("Odds update on") == 2
+    assert "Betano" in text
 
 
 def test_dry_run_does_not_send(caplog):

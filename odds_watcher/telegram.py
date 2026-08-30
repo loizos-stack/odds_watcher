@@ -8,7 +8,7 @@ from typing import Optional
 
 from .detector import Alert
 from .http import TransportError, build_url, request_json
-from .util import format_clock, format_countdown, format_time
+from .util import format_clock, format_countdown, format_date, format_time
 
 log = logging.getLogger(__name__)
 
@@ -92,42 +92,123 @@ def format_price(decimal_odds: float, odds_format: str = "decimal") -> str:
     meaningful on a continuous scale, but a message that says 1.83 to someone
     who reads -121 all day is a message they have to convert before acting.
     """
+    if decimal_odds is None or decimal_odds <= 1.0:
+        return "-"
     if odds_format != "american":
-        return f"{decimal_odds:.2f}"
+        return f"{decimal_odds:.3f}"
     from .detector import decimal_to_american
 
-    american = decimal_to_american(decimal_odds)
-    return f"{american:+.0f}"
+    return f"{decimal_to_american(decimal_odds):+.0f}"
+
+
+_BOOK_NAMES = {
+    "bet365": "Bet365",
+    "draftkings": "DraftKings",
+    "fanduel": "FanDuel",
+    "betano": "Betano",
+    "caesars": "Caesars",
+    "betmgm": "BetMGM",
+    "pointsbet": "PointsBet",
+    "williamhill": "William Hill",
+}
+
+_SIDE_WORDS = {"over", "under", "yes", "no"}
+
+
+def book_name(key: str) -> str:
+    """A book's display name; the API keys them lowercase."""
+    return _BOOK_NAMES.get(key.strip().lower(), key.strip().title())
+
+
+def sport_line(event) -> str:
+    """"Baseball - MLB" from the event's sport and league."""
+    sport = (event.sport or "").replace("_", " ").title()
+    league = (event.league or "").strip()
+    if sport and league:
+        return f"{sport} - {league}"
+    return sport or league
+
+
+def humanize_market(market: str) -> str:
+    """"player_batter_walks" -> "Batter Walks"."""
+    name = market.strip()
+    if name.lower().startswith("player_"):
+        name = name[len("player_"):]
+    return name.replace("_", " ").replace("-", " ").title() or market
+
+
+def split_prop_outcome(outcome: str):
+    """("Coby Mayo Over") -> ("Coby Mayo", "Over"); ("" , side) otherwise."""
+    parts = outcome.strip().split()
+    if len(parts) >= 2 and parts[-1].lower() in _SIDE_WORDS:
+        return " ".join(parts[:-1]), parts[-1].title()
+    return outcome.strip(), ""
+
+
+def format_line(line: str) -> str:
+    """A handicap in parentheses, e.g. "(+0.5)"; empty string when there is none."""
+    line = (line or "").strip()
+    if not line:
+        return ""
+    if line[0] in "+-":
+        return f"({line})"
+    return f"(+{line})"
 
 
 def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") -> str:
-    """Render one drop as a Telegram HTML message."""
+    """Render one drop in the update layout: heading, fixture, opening, move, fair."""
     quote = alert.quote
     event = alert.event
-    header = "📉 <b>Odds drop</b>" + (" (continuing)" if alert.is_repeat else "")
+    is_prop = quote.market.strip().lower().startswith("player_")
+
+    player, side = split_prop_outcome(quote.outcome)
+    if not is_prop:
+        side = outcome_label(quote, event)
+        if side.strip().lower() in _SIDE_WORDS:
+            side = side.strip().title()
+        player = ""
+    line = format_line(quote.line)
+
+    if is_prop:
+        label = "Player Props"
+        if player:
+            label += f" - {_esc(player)}"
+        label += f" ({_esc(humanize_market(quote.market))})"
+    else:
+        label = _esc(humanize_market(quote.market))
+
+    heading = "🔁 <b>Odds update" if alert.is_repeat else "🟡 <b>Odds update"
     lines = [
-        f"{header} · <b>{_esc(quote.bookmaker.upper())}</b>",
+        f"{heading} on {_esc(book_name(quote.bookmaker))}</b>",
         "",
+        _esc(sport_line(event)),
         f"<b>{_esc(event.name)}</b>",
-    ]
-    context = " · ".join(part for part in (event.sport, event.league) if part)
-    if context:
-        lines.append(_esc(context))
-    market = " ".join(part for part in (quote.market, quote.line) if part)
-    lines += [
-        f"Kick-off in <b>{format_countdown(alert.seconds_to_start)}</b> "
-        f"({_esc(format_clock(event.start_ts, tz))})",
+        _esc(format_date(event.start_ts, tz)),
         "",
-        f"Market: <b>{_esc(market)}</b> — <b>{_esc(outcome_label(quote, event))}</b>",
-        "",
-        # Both prices are stamped: which two observations produced this number
-        # is the first thing anyone checks before acting on it.
-        f"Was:  <s>{_esc(format_price(alert.reference_odds, odds_format))}</s>  "
-        f"<i>at {_esc(format_time(alert.reference_ts, tz))}</i>",
-        f"Now:  <b>{_esc(format_price(quote.odds, odds_format))}</b>  "
-        f"<i>at {_esc(format_time(alert.observed_ts, tz))}</i>",
-        f"Drop: <b>{alert.drop_pct:.2f}%</b>",
     ]
+
+    line_part = f" {line}" if line else ""
+    side_part = f"{_esc(side)} " if side else ""
+    opening = alert.opening_odds or alert.reference_odds
+    if opening and opening > 1.0:
+        # The first price we recorded for this line, before any move.
+        lines.append(
+            f"🟢 Opening{line_part}: {side_part}"
+            f"{_esc(format_price(opening, odds_format))}"
+        )
+    now = format_price(quote.odds, odds_format)
+    lines.append(
+        f"🟡 {label}{line_part}: {side_part}"
+        f"<b>{_esc(now)}</b> ↓ [-{alert.drop_pct:.1f}%]"
+    )
+    if alert.fair_odds:
+        lines.append("")
+        lines.append(f"🎯 Fair Odds: {_esc(format_price(alert.fair_odds, odds_format))}")
+
+    lines.append("")
+    lines.append(
+        f"<i>first pitch in {format_countdown(alert.seconds_to_start)}</i>"
+    )
     return "\n".join(lines)
 
 

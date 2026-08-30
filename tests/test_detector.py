@@ -527,8 +527,7 @@ def test_the_alert_reads_in_american(cole_config, store):
         event, [dataclasses.replace(opening, odds=_american(-121))], T_0201)[0]
 
     text = format_alert(alert, "american")
-    # Both prices in American, both stamped, and the percentage spelled out.
-    assert "Was:  <s>-110</s>" in text
-    assert "Now:  <b>-121</b>" in text
-    assert "Drop: <b>10.0" in text
-    assert text.count("at ") >= 2
+    # American on both the opening and the new price, with the drop spelled out.
+    assert "-110" in text            # opening
+    assert "<b>-121</b>" in text     # new price
+    assert "[-10.0%]" in text

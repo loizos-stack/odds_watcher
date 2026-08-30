@@ -68,7 +68,7 @@ def test_full_cycle_sends_one_alert(config, store):
     assert len(alerts) == 1
     assert len(telegram.sent) == 1
     body = telegram.sent[0]
-    assert "Ajax vs PSV" in body and "BET365" in body and "Drop: <b>10.00%</b>" in body
+    assert "Ajax vs PSV" in body and "Bet365" in body and "[-10.0%]" in body
 
 
 def test_events_are_only_refetched_when_stale(config, store):
@@ -346,7 +346,7 @@ def test_uncapped_alerts_are_not_marked_as_sent(config, store):
 
     # bet365 dropped 25%, betano 10% — only the larger is sent and marked.
     assert len(telegram.sent) == 1
-    assert "BET365" in telegram.sent[0]
+    assert "Bet365" in telegram.sent[0]
     assert store.get_state(quote(1.50)).alert_count == 1
     assert store.get_state(quote(1.80, bookmaker="betano")).alert_count == 0
 
@@ -541,7 +541,7 @@ def test_watcher_runs_unchanged_against_the_odds_api(config, store):
     assert alerts[0].quote.market == "h2h"
     assert alerts[0].reference_odds == 1.65
     assert round(alerts[0].drop_pct, 1) == 12.1
-    assert "DRAFTKINGS" in telegram.sent[0]
+    assert "DraftKings" in telegram.sent[0]
 
 
 def test_exhausted_local_budget_is_a_message_not_a_traceback(config, capsys, monkeypatch):

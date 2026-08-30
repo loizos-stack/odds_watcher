@@ -58,6 +58,11 @@ def format_time(ts: float, tz: str = "UTC") -> str:
     return datetime.fromtimestamp(ts, tz=_zone(tz)).strftime("%H:%M:%S %Z")
 
 
+def format_date(ts: float, tz: str = "UTC") -> str:
+    """Day and time of an event, e.g. 30.08.2026 23:05, in the reader's zone."""
+    return datetime.fromtimestamp(ts, tz=_zone(tz)).strftime("%d.%m.%Y %H:%M")
+
+
 def _zone(name: str):
     if not name or name.upper() == "UTC":
         return timezone.utc
