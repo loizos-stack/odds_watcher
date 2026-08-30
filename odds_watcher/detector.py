@@ -23,6 +23,10 @@ from .store import Store
 
 log = logging.getLogger(__name__)
 
+# Below this a "drop" is rounding noise, not a move; never alert on it,
+# whatever FOLLOW_UP_DROP_PCT is set to.
+MIN_REPORTABLE_DROP_PCT = 0.1
+
 
 @dataclass(frozen=True)
 class Alert:
@@ -122,6 +126,7 @@ class DropDetector:
     def relevant(self, quote: Quote) -> bool:
         return (
             quote.bookmaker in self.bookmakers
+            and "{" not in quote.outcome and "{" not in quote.market
             and market_allowed(quote.market, self.config.markets)
             and outcome_allowed(quote.outcome, self.config.outcomes)
             and quote.odds >= self.config.min_odds
@@ -186,7 +191,7 @@ class DropDetector:
             # is known to be moving, and the fact that it is STILL moving is
             # the information -- so any further shortening is reported.
             threshold = cfg.min_drop_pct if state.alert_count == 0 else cfg.follow_up_drop_pct
-            if change <= 0 or change < threshold:
+            if change < max(threshold, MIN_REPORTABLE_DROP_PCT):
                 continue
 
             alerts.append(

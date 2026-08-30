@@ -531,3 +531,26 @@ def test_the_alert_reads_in_american(cole_config, store):
     assert "-110" in text            # opening
     assert "<b>-121</b>" in text     # new price
     assert "[-10.0%]" in text
+
+
+def test_a_sub_tenth_percent_wiggle_never_alerts(config, store):
+    """FOLLOW_UP_DROP_PCT=0 must not turn rounding noise into a message."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, baseline_mode="last-seen", follow_up_drop_pct=0.0,
+                              min_drop_pct=4.3)
+    detector = DropDetector(cfg, store)
+    detector.process(EVENT, [quote(1.111)], at(9))
+    first = detector.process(EVENT, [quote(1.05)], at(8))   # a real drop, alerts
+    assert len(first) == 1
+    store.mark_alerted(first[0].quote, ts=at(8))
+    # A 0.03% wiggle from the alerted price must stay silent.
+    assert detector.process(EVENT, [quote(1.0497)], at(6)) == []
+
+
+def test_placeholder_outcomes_are_dropped(config, store):
+    """Provider rows with unresolved {template} markers are not real prices."""
+    detector = DropDetector(config, store)
+    junk = Quote(EVENT.id, "bet365", "player_hits", "1.5",
+                 "{optionTypeAbbr}{value} Hits Under", 2.0)
+    assert not detector.relevant(junk)

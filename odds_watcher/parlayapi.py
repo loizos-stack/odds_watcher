@@ -883,13 +883,10 @@ class ParlayApiClient:
         if not wanted:
             return True
         name = self._market_token(market)
-        for key in wanted:
-            token = self._market_token(key)
-            # Exact token, or the requested token as a prefix of a longer label
-            # such as "total_bases_o_u" for a request of "total_bases".
-            if token and (token == name or name.startswith(token + "_")):
-                return True
-        return False
+        # Exact token only. A prefix match let "strikeouts_milestones_3_or_more"
+        # through for a request of "strikeouts"; the milestone and alt variants
+        # are distinct markets the user did not ask for.
+        return any(self._market_token(key) == name for key in wanted if key)
 
     def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = "") -> list:
         quotes = self.parse_quotes(self.get_odds_payloads(event_ids, bookmakers, sport=sport))

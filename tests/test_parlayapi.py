@@ -847,3 +847,20 @@ def test_flat_prop_rows_key_on_the_canonical_event_id():
     }]
     quotes = parse_quotes(payload)
     assert quotes and all(q.event_id == "shared-id" for q in quotes)
+
+
+def test_milestone_variants_do_not_match_the_base_market():
+    """A request for player_strikeouts must not pull in the milestone market."""
+    c = ParlayApiClient("k", featured_markets=(), prop_markets=("player_strikeouts",))
+    assert c.market_wanted("Strikeouts")
+    assert c.market_wanted("player_strikeouts")
+    assert not c.market_wanted("Strikeouts Milestones 3 Or More")
+    assert not c.market_wanted("player_strikeouts_milestones_3_or_more")
+
+
+def test_hits_and_hits_allowed_stay_distinct():
+    c = ParlayApiClient("k", featured_markets=(),
+                        prop_markets=("player_hits", "player_hits_allowed"))
+    assert c.market_wanted("Hits")
+    assert c.market_wanted("Hits Allowed")
+    assert not c.market_wanted("Hits Runs Rbis Milestones")

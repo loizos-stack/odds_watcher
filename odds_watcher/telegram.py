@@ -121,12 +121,12 @@ def book_name(key: str) -> str:
 
 
 def sport_line(event) -> str:
-    """"Baseball - MLB" from the event's sport and league."""
-    sport = (event.sport or "").replace("_", " ").title()
+    """"Baseball - MLB" from the event's sport and league, without repetition."""
+    sport = (event.sport or "").replace("_", " ").title().strip()
     league = (event.league or "").strip()
-    if sport and league:
+    if sport and league and sport.lower() != league.lower():
         return f"{sport} - {league}"
-    return sport or league
+    return league or sport
 
 
 def humanize_market(market: str) -> str:
