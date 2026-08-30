@@ -23,7 +23,7 @@ from typing import Any, Optional, Sequence
 
 from .http import HttpError, build_url, redact, request_json_with_headers
 from .odds_api import BudgetExceeded, Event, Quote
-from .util import parse_timestamp
+from .util import now_ts, parse_timestamp
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,10 @@ PROP_KEYS_PREFIX = "__parlay_props__"
 # publish thousands of prop keys -- one per player per stat -- and naming
 # them all produces a URL of tens of kilobytes, rejected with HTTP 414.
 MAX_MARKET_PARAM_CHARS = 1600
+# A "no props" verdict is only ever provisional: player props are posted
+# hours before a game, so a sport marked propless must be re-checked a few
+# times a day rather than trusted for a week.
+NO_PROPS_TTL_SECONDS = 6 * 3600
 CORE_GAME_MARKETS = ("h2h", "spreads", "totals")
 
 
@@ -705,24 +709,20 @@ class ParlayApiClient:
         if self.market_cache is None:
             return False
         try:
-            _usable, checked_at = self.market_cache.get_market_keys(
-                NO_PROPS_KEY, self.market_keys_ttl
-            )
-        except Exception:
-            return False
-        if checked_at is None:
-            return False
-        try:
             rows = self.market_cache.conn.execute(
-                "SELECT ok FROM market_keys WHERE sport = ? AND key = ?",
+                "SELECT ok, checked_at FROM market_keys WHERE sport = ? AND key = ?",
                 (NO_PROPS_KEY, sport),
             ).fetchone()
         except Exception:
             return False
-        if rows is not None and not rows["ok"]:
-            self._sports_without_props.add(sport)
-            return True
-        return False
+        if rows is None or rows["ok"]:
+            return False
+        # Stale verdicts are ignored, so a sport that had no props this morning
+        # is asked again this evening once the props are posted.
+        if now_ts() - rows["checked_at"] > NO_PROPS_TTL_SECONDS:
+            return False
+        self._sports_without_props.add(sport)
+        return True
 
     def wants_props(self, sport: str) -> bool:
         """Whether to spend the second request of the poll on this sport.
@@ -825,15 +825,18 @@ class ParlayApiClient:
             try:
                 rows = _as_list(self._sport_props(sport))
             except HttpError as exc:
+                # A 404 means the sport has no props endpoint; a transient error
+                # does not. Only the former is worth remembering.
                 log.warning("props unavailable for %s: %s", sport, exc)
-                self._remember_no_props(sport)
-            else:
-                kept = [b for b in rows if _keep(b)]
-                if not rows:
-                    # This sport offers no props at all. Asking again every
-                    # poll is a request per poll for an empty answer.
+                if getattr(exc, "status", None) == 404:
                     self._remember_no_props(sport)
-                blocks += kept
+            else:
+                # An empty payload is NOT proof the sport has no props: player
+                # props are posted only hours before a game, so "none right
+                # now" must not become "none for a week". A sport with no prop
+                # markets at all is pruned by _prop_market_keys_for via the
+                # listing endpoint, which is authoritative.
+                blocks += [b for b in rows if _keep(b)]
         return blocks
 
     # -- interface parity -------------------------------------------------
