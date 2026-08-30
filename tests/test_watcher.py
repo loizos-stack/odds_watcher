@@ -1263,7 +1263,7 @@ def test_digest_accumulates_and_goes_out_hourly(config, store):
     # An hour after the first buffered alert, one summary goes out.
     watcher.flush_digest_if_due(at(16) + 3601)
     assert len(tg.sent) == 1
-    assert "Odds moves" in tg.sent[0]
+    assert "Summary for the past hour" in tg.sent[0]
     assert watcher._digest == []
 
 
@@ -1290,4 +1290,4 @@ def test_digest_and_per_drop_alerts_both_fire(config, store):
     assert len(watcher._digest) == 1             # also queued for the hour
     watcher.flush_digest_if_due(at(8) + 3601)
     assert len(tg.sent) == 2                     # now the hourly summary too
-    assert "Odds moves" in tg.sent[1]
+    assert "Summary for the past hour" in tg.sent[1]
