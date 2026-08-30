@@ -23,7 +23,7 @@ from .detector import Alert, DropDetector
 from .http import TransportError
 from .odds_api import BudgetExceeded, Event, Quote
 from .store import Store
-from .telegram import TelegramClient, format_digest
+from .telegram import TelegramClient, format_digest, format_player_digest, split_message
 from .util import format_countdown, now_ts
 
 log = logging.getLogger(__name__)
@@ -76,6 +76,10 @@ class Watcher:
             )
         self._all_sports: tuple = ()
         self._sports_fetched_at: float = 0.0
+        # Digest mode: alerts accumulate here and go out as one per-player
+        # summary every DIGEST_INTERVAL_SECONDS instead of one message each.
+        self._digest: list[Alert] = []
+        self._digest_started: Optional[float] = None
 
     # -- fixtures ---------------------------------------------------------
     def refresh_events(self, now: float, *, force: bool = False) -> list[Event]:
@@ -233,7 +237,12 @@ class Watcher:
             alerts.extend(self.detector.process(event, quotes, now))
 
         if alerts:
-            self.dispatch(self.rank_and_cap(alerts), now)
+            ranked = self.rank_and_cap(alerts)
+            if self.config.digest_interval_seconds > 0:
+                self.buffer_for_digest(ranked, now)
+            else:
+                self.dispatch(ranked, now)
+        self.flush_digest_if_due(now)
 
         # A poll that finds nothing logs nothing, so a healthy watcher and a
         # stuck one read the same in the journal. Say what was looked at.
@@ -295,6 +304,39 @@ class Watcher:
                     alert.drop_pct,
                 )
         return ranked[:cap]
+
+    def buffer_for_digest(self, alerts: list[Alert], now: float) -> None:
+        """Hold alerts for the hourly summary, re-baselining each one now.
+
+        The price is marked as alerted immediately so the same drop is not
+        re-detected on every poll until the digest goes out; only the Telegram
+        delivery is deferred.
+        """
+        if self._digest_started is None:
+            self._digest_started = now
+        for alert in alerts:
+            self.store.mark_alerted(alert.quote, ts=now)
+            self._digest.append(alert)
+        self.store.commit()
+
+    def flush_digest_if_due(self, now: float) -> None:
+        if not self._digest or self._digest_started is None:
+            return
+        if now - self._digest_started < self.config.digest_interval_seconds:
+            return
+        text = format_player_digest(
+            self._digest, self.config.odds_format, self.config.display_timezone,
+            self.config.drop_metric,
+        )
+        for chunk in split_message(text):
+            try:
+                self.telegram.send_message(chunk)
+            except TransportError:
+                log.error("could not deliver the hourly digest; will retry next poll")
+                return  # keep the buffer, try again on the next poll
+        log.info("sent hourly digest: %d move(s)", len(self._digest))
+        self._digest = []
+        self._digest_started = now
 
     def dispatch(self, alerts: list[Alert], now: float) -> None:
         """Send alerts to Telegram, marking each one only once it is delivered."""

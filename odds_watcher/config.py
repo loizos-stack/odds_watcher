@@ -123,6 +123,9 @@ class Config:
     # IANA zone for timestamps in messages. Kick-off times are the thing being
     # reasoned about, and reading them in another zone invites a real mistake.
     display_timezone: str = "UTC"
+    # Batch alerts into one per-player summary every N seconds instead of
+    # sending each drop as it happens. 0 = send immediately (the default).
+    digest_interval_seconds: int = 0
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
     # Ceiling on messages from one poll. With every market and player prop
@@ -307,6 +310,7 @@ class Config:
             drop_metric=drop_metric,
             follow_up_drop_pct=follow_up,
             display_timezone=display_timezone,
+            digest_interval_seconds=_get_int(env, "DIGEST_INTERVAL_SECONDS", 0, minimum=0),
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
             poll_interval_seconds=poll_interval,

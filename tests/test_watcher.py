@@ -1237,3 +1237,40 @@ def test_prices_for_unknown_fixtures_are_reported_not_swallowed(config, store, c
 
     assert "1 of 2 price(s) belong to fixtures not in the list" in caplog.text
     assert "1 price(s) were usable" in caplog.text
+
+
+def test_digest_mode_batches_alerts_into_one_hourly_message(config, store):
+    """With a digest interval, drops accumulate and go out as one summary."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, digest_interval_seconds=3600, min_drop_pct=5.0,
+                              baseline_mode="last-seen", window_start_seconds=1200)
+    tg = FakeTelegram()
+    watcher = Watcher(cfg, FakeApi([EVENT], []), tg, store)
+
+    # Two polls inside the hour, each with a fresh drop; nothing sent yet.
+    watcher.detector.process(EVENT, [quote(2.00)], at(18))
+    a1 = watcher.detector.process(EVENT, [quote(1.70)], at(16))
+    watcher.buffer_for_digest(a1, at(16))
+    watcher.flush_digest_if_due(at(16))
+    assert tg.sent == []
+
+    a2 = watcher.detector.process(EVENT, [quote(1.50)], at(14))
+    watcher.buffer_for_digest(a2, at(14))
+    watcher.flush_digest_if_due(at(14))
+    assert tg.sent == []
+
+    # An hour after the first buffered alert, one message goes out.
+    watcher.flush_digest_if_due(at(16) + 3601)
+    assert len(tg.sent) == 1
+    assert "Odds moves" in tg.sent[0]
+    assert watcher._digest == []
+
+
+def test_immediate_mode_is_unchanged_when_interval_is_zero(config, store):
+    tg = FakeTelegram()
+    watcher = Watcher(config, FakeApi([EVENT], [[quote(2.00)], [quote(1.70)]]), tg, store)
+    watcher.poll_once(at(20))   # baseline
+    watcher.poll_once(at(8))    # drop -> sent right away
+    assert len(tg.sent) == 1
+    assert watcher._digest == []

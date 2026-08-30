@@ -211,6 +211,79 @@ def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") ->
     return "\n".join(lines)
 
 
+def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decimal"):
+    """One message summarising an hour of drops, grouped by fixture and player.
+
+    A line may drop several times in the hour; each player/market keeps the
+    earliest opening price and the latest price, and the move shown is the net
+    change between them, measured on the configured scale.
+    """
+    from .detector import measure_drop
+
+    fixtures: dict = {}
+    for a in alerts:
+        ev = a.event
+        player, side = split_prop_outcome(a.quote.outcome)
+        who = player or outcome_label(a.quote, ev)
+        if side.strip().lower() not in _SIDE_WORDS and not player:
+            side = ""
+        key = (a.quote.market, a.quote.line, side or a.quote.outcome)
+        opening = a.opening_odds or a.reference_odds
+        opening_ts = a.opening_ts or a.observed_ts
+        fx = fixtures.setdefault(ev.id, {"event": ev, "players": {}})
+        recs = fx["players"].setdefault(who, {})
+        rec = recs.get(key)
+        if rec is None:
+            recs[key] = {
+                "open": opening, "open_ts": opening_ts,
+                "last": a.quote.odds, "last_ts": a.observed_ts,
+                "side": side, "market": a.quote.market, "line": a.quote.line,
+            }
+        else:
+            if opening_ts < rec["open_ts"]:
+                rec["open"], rec["open_ts"] = opening, opening_ts
+            if a.observed_ts >= rec["last_ts"]:
+                rec["last"], rec["last_ts"] = a.quote.odds, a.observed_ts
+
+    moves = sum(len(recs) for fx in fixtures.values() for recs in fx["players"].values())
+    players = sum(len(fx["players"]) for fx in fixtures.values())
+    out = [f"🟡 <b>Odds moves — last hour</b> ({moves} across {players} player(s))", ""]
+    for fx in fixtures.values():
+        ev = fx["event"]
+        out.append(f"{_esc(sport_line(ev))} · <b>{_esc(ev.name)}</b>")
+        for who, recs in fx["players"].items():
+            out.append(f"  <b>{_esc(who)}</b>")
+            for rec in recs.values():
+                lp = format_line(rec["line"])
+                lp = f" {lp}" if lp else ""
+                side = f"{_esc(rec['side'])} " if rec["side"] else ""
+                net = measure_drop(rec["open"], rec["last"], metric)
+                out.append(
+                    f"    {_esc(humanize_market(rec['market']))}{lp}: {side}"
+                    f"{_esc(format_price(rec['open'], odds_format))} → "
+                    f"<b>{_esc(format_price(rec['last'], odds_format))}</b> ↓ {net:.1f}%"
+                )
+        out.append("")
+    return "\n".join(out).rstrip()
+
+
+def split_message(text: str, limit: int = 3800):
+    """Split a long digest into Telegram-sized messages on blank-line seams."""
+    blocks = text.split("\n\n")
+    chunks: list = []
+    current = ""
+    for block in blocks:
+        candidate = block if not current else current + "\n\n" + block
+        if len(candidate) > limit and current:
+            chunks.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def format_digest(alerts: list, odds_format: str = "decimal", tz: str = "UTC") -> str:
     """One message covering several drops found in the same poll."""
     if len(alerts) == 1:
