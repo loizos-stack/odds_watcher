@@ -197,10 +197,13 @@ def test_no_complaint_when_the_env_is_current(tmp_path, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_blank_featured_markets_falls_back_to_the_defaults():
-    """An empty setting must not ask the odds endpoint for no markets."""
-    config = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api", "FEATURED_MARKETS": ""})
-    assert config.featured_markets == ("h2h", "spreads", "totals")
+def test_featured_markets_distinguishes_empty_from_absent():
+    """Empty means "no game markets" (props-only); absent means the default."""
+    empty = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api", "FEATURED_MARKETS": ""})
+    assert empty.featured_markets == ()
+
+    absent = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api"})
+    assert absent.featured_markets == ("h2h", "spreads", "totals")
 
     explicit = Config.from_env({**BASE, "ODDS_PROVIDER": "the-odds-api", "FEATURED_MARKETS": "h2h"})
     assert explicit.featured_markets == ("h2h",)
@@ -331,3 +334,18 @@ def test_a_missing_env_file_points_at_the_preset_command(tmp_path):
     with pytest.raises(ConfigError) as exc:
         Config.from_env({}, env_file=tmp_path / ".env")
     assert "preset --source" in str(exc.value)
+
+
+def test_empty_featured_markets_means_no_game_markets():
+    """Props-only: an explicit empty value must not revert to the default."""
+    env = dict(BASE, FEATURED_MARKETS="", PROP_MARKETS="player_strikeouts")
+    assert Config.from_env(env).featured_markets == ()
+
+
+def test_absent_featured_markets_gets_the_default():
+    assert Config.from_env(dict(BASE)).featured_markets == ("h2h", "spreads", "totals")
+
+
+def test_set_featured_markets_is_honoured():
+    env = dict(BASE, FEATURED_MARKETS="h2h,totals")
+    assert Config.from_env(env).featured_markets == ("h2h", "totals")

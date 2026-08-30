@@ -319,7 +319,14 @@ class Config:
             regions=_csv(env.get("REGIONS", "us")) or ("us",),
             # The odds endpoint requires at least one market; an empty setting
             # would silently ask for none and be billed as one credit anyway.
-            featured_markets=_csv(env.get("FEATURED_MARKETS", "")) or ("h2h", "spreads", "totals"),
+            featured_markets=(
+                # An ABSENT key gets the game-market default; an explicitly
+                # EMPTY key means "no game markets" (props-only) and must be
+                # honoured, not silently turned back into the default.
+                _csv(env["FEATURED_MARKETS"])
+                if "FEATURED_MARKETS" in env
+                else ("h2h", "spreads", "totals")
+            ),
             prop_markets=_csv(env.get("PROP_MARKETS", "")),
             prop_sports=_csv(env.get("PROP_SPORTS", "")),
             market_keys_ttl_seconds=_get_int(env, "MARKET_KEYS_TTL_SECONDS", 86400, minimum=600),
