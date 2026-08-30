@@ -851,19 +851,44 @@ class ParlayApiClient:
             return ()
         return tuple(dict.fromkeys(keys))
 
+    @staticmethod
+    def _market_token(name: str) -> str:
+        """Normalise a market key for comparison across the API's spellings.
+
+        The request names markets as player_strikeouts, but the reply may label
+        the same market "Strikeouts", "Pitcher Strikeouts" or "player_strikeouts"
+        -- different case, spacing, and a "player_" prefix that comes and goes.
+        Reduce every form to one token so they compare equal.
+        """
+        token = name.strip().lower()
+        for ch in (" ", "-", "+", "/", "."):
+            token = token.replace(ch, "_")
+        while "__" in token:
+            token = token.replace("__", "_")
+        token = token.strip("_")
+        if token.startswith("player_"):
+            token = token[len("player_"):]
+        return token
+
     def market_wanted(self, market: str) -> bool:
         """Whether a returned market is one that was asked for.
 
-        Naming markets in the request is not enough: the props endpoint
-        answers with the event's other markets too, so a moneyline arrives in
-        a reply to a request for strikeouts. Filtering here means the setting
-        that says which markets to watch is the one that decides.
+        Naming markets in the request is not enough: the props endpoint answers
+        with the event's other markets too, so a moneyline arrives in a reply
+        to a request for strikeouts. Filtering here means the setting that says
+        which markets to watch is the one that decides.
         """
         wanted = self.wanted_markets()
         if not wanted:
             return True
-        name = market.strip().lower().replace(" ", "_").replace("-", "_")
-        return any(key == name or key in name for key in wanted)
+        name = self._market_token(market)
+        for key in wanted:
+            token = self._market_token(key)
+            # Exact token, or the requested token as a prefix of a longer label
+            # such as "total_bases_o_u" for a request of "total_bases".
+            if token and (token == name or name.startswith(token + "_")):
+                return True
+        return False
 
     def get_multi_odds(self, event_ids: Sequence[str], bookmakers: Sequence[str], *, sport: str = "") -> list:
         quotes = self.parse_quotes(self.get_odds_payloads(event_ids, bookmakers, sport=sport))
@@ -871,9 +896,10 @@ class ParlayApiClient:
             return quotes
         kept = [q for q in quotes if self.market_wanted(q.market)]
         if len(kept) != len(quotes):
+            dropped = sorted({q.market for q in quotes if not self.market_wanted(q.market)})
             log.debug(
-                "%s: dropped %d price(s) in markets that were not requested",
-                sport, len(quotes) - len(kept),
+                "%s: kept %d of %d price(s); dropped markets: %s",
+                sport, len(kept), len(quotes), ", ".join(dropped[:40]),
             )
         return kept
 
