@@ -141,11 +141,16 @@ def humanize_market(market: str) -> str:
 
 
 def split_prop_outcome(outcome: str):
-    """("Coby Mayo Over") -> ("Coby Mayo", "Over"); ("" , side) otherwise."""
+    """Split a prop outcome into (player, side).
+
+    "Coby Mayo Over" -> ("Coby Mayo", "Over"). A bare side like "Over", or a
+    team/other outcome with no side word ("draw"), has no player and returns
+    ("", ...) so it is not mistaken for one.
+    """
     parts = outcome.strip().split()
     if len(parts) >= 2 and parts[-1].lower() in _SIDE_WORDS:
         return " ".join(parts[:-1]), parts[-1].title()
-    return outcome.strip(), ""
+    return "", ""
 
 
 def format_line(line: str) -> str:
