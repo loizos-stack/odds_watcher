@@ -39,13 +39,12 @@ def test_a_prop_alert_reads_as_the_template():
         reference_odds=1.70,
         drop_pct=13.6,
         opening_odds=1.60,
-        fair_odds=1.546,
     )
     text = format_alert(a, odds_format="decimal")
     assert "Odds update on DraftKings" in text
     assert "🟢 Opening (+0.5): Under 1.600" in text
     assert "Player Props - Coby Mayo (Batter Walks) (+0.5): Under <b>1.470</b> ↓ [-13.6%]" in text
-    assert "🎯 Fair Odds: 1.546" in text
+    assert "Fair Odds" not in text
 
 
 def test_alert_names_the_team_not_the_side():

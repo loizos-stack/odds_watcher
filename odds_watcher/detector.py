@@ -36,7 +36,6 @@ class Alert:
     observed_ts: float = 0.0
     opening_odds: float = 0.0
     opening_ts: float = 0.0
-    fair_odds: float = 0.0
 
     @property
     def is_repeat(self) -> bool:
@@ -86,24 +85,6 @@ def measure_drop(reference: float, current: float, metric: str) -> float:
     if metric == "american":
         return american_drop_pct(reference, current)
     return drop_pct(reference, current)
-
-
-def fair_odds(target: float, siblings: Sequence[float]) -> float:
-    """The no-vig fair decimal price for `target`, given every side's price.
-
-    A book\'s prices carry a margin: the implied probabilities sum to more
-    than 1. Removing it proportionally gives the price that would be fair if
-    the book took no cut -- the number to judge a move against. Needs at least
-    two sides; with one it cannot be computed and returns 0.
-    """
-    prices = [p for p in siblings if p and p > 1.0]
-    if target <= 1.0 or len(prices) < 2:
-        return 0.0
-    overround = sum(1.0 / p for p in prices)
-    if overround <= 0:
-        return 0.0
-    fair_prob = (1.0 / target) / overround
-    return round(1.0 / fair_prob, 3) if fair_prob > 0 else 0.0
 
 
 def market_allowed(market: str, wanted: Sequence[str]) -> bool:
@@ -156,11 +137,6 @@ class DropDetector:
         cfg = self.config
         seconds = event.seconds_to_start(now)
 
-        quotes = list(quotes)
-        by_market: dict = {}
-        for q in quotes:
-            if q.event_id == event.id:
-                by_market.setdefault((q.bookmaker, q.market, q.line), []).append(q.odds)
 
         if seconds > cfg.baseline_lead_seconds or seconds < cfg.window_end_seconds:
             # Too early to bother, or the window has already closed.
@@ -213,7 +189,6 @@ class DropDetector:
             if change <= 0 or change < threshold:
                 continue
 
-            siblings = by_market.get((quote.bookmaker, quote.market, quote.line), [])
             alerts.append(
                 Alert(
                     event=event,
@@ -226,7 +201,6 @@ class DropDetector:
                     observed_ts=quote.updated_ts or now,
                     opening_odds=state.baseline_odds,
                     opening_ts=state.baseline_ts,
-                    fair_odds=fair_odds(quote.odds, siblings),
                 )
             )
             log.info(

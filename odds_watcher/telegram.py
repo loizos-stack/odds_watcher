@@ -201,9 +201,6 @@ def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") ->
         f"🟡 {label}{line_part}: {side_part}"
         f"<b>{_esc(now)}</b> ↓ [-{alert.drop_pct:.1f}%]"
     )
-    if alert.fair_odds:
-        lines.append("")
-        lines.append(f"🎯 Fair Odds: {_esc(format_price(alert.fair_odds, odds_format))}")
 
     lines.append("")
     lines.append(
