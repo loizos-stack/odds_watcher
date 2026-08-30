@@ -1239,8 +1239,8 @@ def test_prices_for_unknown_fixtures_are_reported_not_swallowed(config, store, c
     assert "1 price(s) were usable" in caplog.text
 
 
-def test_digest_mode_batches_alerts_into_one_hourly_message(config, store):
-    """With a digest interval, drops accumulate and go out as one summary."""
+def test_digest_accumulates_and_goes_out_hourly(config, store):
+    """The digest collects drops and emits one summary after the interval."""
     import dataclasses
 
     cfg = dataclasses.replace(config, digest_interval_seconds=3600, min_drop_pct=5.0,
@@ -1248,19 +1248,19 @@ def test_digest_mode_batches_alerts_into_one_hourly_message(config, store):
     tg = FakeTelegram()
     watcher = Watcher(cfg, FakeApi([EVENT], []), tg, store)
 
-    # Two polls inside the hour, each with a fresh drop; nothing sent yet.
+    # Drops accumulate for the digest; the digest itself waits for the hour.
     watcher.detector.process(EVENT, [quote(2.00)], at(18))
     a1 = watcher.detector.process(EVENT, [quote(1.70)], at(16))
-    watcher.buffer_for_digest(a1, at(16))
+    watcher.add_to_digest(a1, at(16))
     watcher.flush_digest_if_due(at(16))
-    assert tg.sent == []
+    assert tg.sent == []                       # nothing from the digest yet
 
     a2 = watcher.detector.process(EVENT, [quote(1.50)], at(14))
-    watcher.buffer_for_digest(a2, at(14))
+    watcher.add_to_digest(a2, at(14))
     watcher.flush_digest_if_due(at(14))
     assert tg.sent == []
 
-    # An hour after the first buffered alert, one message goes out.
+    # An hour after the first buffered alert, one summary goes out.
     watcher.flush_digest_if_due(at(16) + 3601)
     assert len(tg.sent) == 1
     assert "Odds moves" in tg.sent[0]
@@ -1274,3 +1274,20 @@ def test_immediate_mode_is_unchanged_when_interval_is_zero(config, store):
     watcher.poll_once(at(8))    # drop -> sent right away
     assert len(tg.sent) == 1
     assert watcher._digest == []
+
+
+def test_digest_and_per_drop_alerts_both_fire(config, store):
+    """A digest interval adds the summary; it does not replace instant alerts."""
+    import dataclasses
+
+    cfg = dataclasses.replace(config, digest_interval_seconds=3600, min_drop_pct=5.0)
+    tg = FakeTelegram()
+    watcher = Watcher(cfg, FakeApi([EVENT], [[quote(2.00)], [quote(1.70)]]), tg, store)
+    watcher.poll_once(at(20))   # baseline
+    watcher.poll_once(at(8))    # a drop: sent immediately AND buffered
+
+    assert len(tg.sent) == 1                     # the per-drop message
+    assert len(watcher._digest) == 1             # also queued for the hour
+    watcher.flush_digest_if_due(at(8) + 3601)
+    assert len(tg.sent) == 2                     # now the hourly summary too
+    assert "Odds moves" in tg.sent[1]

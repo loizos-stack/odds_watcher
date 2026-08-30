@@ -238,10 +238,9 @@ class Watcher:
 
         if alerts:
             ranked = self.rank_and_cap(alerts)
+            self.dispatch(ranked, now)          # per-drop, immediately
             if self.config.digest_interval_seconds > 0:
-                self.buffer_for_digest(ranked, now)
-            else:
-                self.dispatch(ranked, now)
+                self.add_to_digest(ranked, now)  # and roll up for the hourly summary
         self.flush_digest_if_due(now)
 
         # A poll that finds nothing logs nothing, so a healthy watcher and a
@@ -305,19 +304,11 @@ class Watcher:
                 )
         return ranked[:cap]
 
-    def buffer_for_digest(self, alerts: list[Alert], now: float) -> None:
-        """Hold alerts for the hourly summary, re-baselining each one now.
-
-        The price is marked as alerted immediately so the same drop is not
-        re-detected on every poll until the digest goes out; only the Telegram
-        delivery is deferred.
-        """
+    def add_to_digest(self, alerts: list[Alert], now: float) -> None:
+        """Collect already-dispatched alerts for the next hourly summary."""
         if self._digest_started is None:
             self._digest_started = now
-        for alert in alerts:
-            self.store.mark_alerted(alert.quote, ts=now)
-            self._digest.append(alert)
-        self.store.commit()
+        self._digest.extend(alerts)
 
     def flush_digest_if_due(self, now: float) -> None:
         if not self._digest or self._digest_started is None:
