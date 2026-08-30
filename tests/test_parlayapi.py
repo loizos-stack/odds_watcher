@@ -829,3 +829,21 @@ def test_market_matching_tolerates_spacing_and_case():
     assert client.market_wanted("Player Strikeouts")
     assert client.market_wanted("player_strikeouts")
     assert not client.market_wanted("moneyline")
+
+
+def test_flat_prop_rows_key_on_the_canonical_event_id():
+    """A prop row keyed by `id` never matches the fixture list; use canonical."""
+    from odds_watcher.parlayapi import parse_quotes
+
+    payload = [{
+        "id": "per-endpoint-id",
+        "canonical_event_id": "shared-id",
+        "bookmaker": "bet365",
+        "player_name": "Gerrit Cole",
+        "market": "player_strikeouts",
+        "line": 5.5,
+        "over_price": -110,
+        "under_price": -120,
+    }]
+    quotes = parse_quotes(payload)
+    assert quotes and all(q.event_id == "shared-id" for q in quotes)

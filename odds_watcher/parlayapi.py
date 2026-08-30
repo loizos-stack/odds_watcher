@@ -267,9 +267,10 @@ def _flat_prop_quotes(row: dict, default_event_id: Optional[str], odds_format: s
     markets: ``{"player_name": ..., "line": 0.5, "over_price": -110,
     "under_price": -120, "bookmaker": "draftkings"}``.
     """
-    event_id = str(
-        _first(row, "event_id", "eventId", "game_id", "id", default=default_event_id) or ""
-    )
+    # canonical_event_id first: the events and odds endpoints number the same
+    # fixture differently under `id`, so a prop row keyed by `id` never matches
+    # the fixture list and every price is dropped as an orphan.
+    event_id = str(event_id_of(row, default=default_event_id) or "")
     book = _text(_first(row, "bookmaker", "book", "sportsbook")).lower()
     player = _text(_first(row, "player_name", "player", "participant", "description"))
     market = _text(_first(row, "market", "market_key", "marketKey", "key", "prop_type"))
