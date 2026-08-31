@@ -68,18 +68,39 @@ def main(argv: list[str]) -> int:
         print(f"no upcoming {sport} fixtures right now")
         return 0
 
+    # A phantom fixture shows up as the same two teams listed twice with
+    # different start times -- one a round placeholder, the other the real
+    # first pitch. Flag any matchup that appears more than once.
+    def pair(e) -> frozenset:
+        return frozenset((e.home.strip().lower(), e.away.strip().lower()))
+
+    counts: dict = {}
+    for e in events:
+        counts[pair(e)] = counts.get(pair(e), 0) + 1
+
     tz = config.display_timezone
-    print(f"{'fixture':<34}  {'start (UTC)':<20}  {'start (' + tz + ')':<24}  {'T-minus':>8}  state")
+    print(f"{'fixture':<34}  {'event id':<14}  {'start (UTC)':<20}  "
+          f"{'start (' + tz + ')':<24}  {'T-minus':>8}  {'dup':<4} state")
     for e in events:
         seconds = e.seconds_to_start(now)
         mins = seconds / 60.0
+        # A start time on an exact 5-minute boundary AND repeated matchup is
+        # the signature of a placeholder rather than a scheduled first pitch.
+        dup = "DUP" if counts[pair(e)] > 1 else ""
         print(
             f"{e.name[:34]:<34}  "
+            f"{str(e.id)[:14]:<14}  "
             f"{format_clock(e.start_ts, 'UTC'):<20}  "
             f"{format_clock(e.start_ts, tz):<24}  "
             f"{mins:>7.0f}m  "
-            f"{classify(config, seconds)}"
+            f"{dup:<4} {classify(config, seconds)}"
         )
+
+    dups = sum(1 for n in counts.values() if n > 1)
+    if dups:
+        print(f"\n! {dups} matchup(s) are listed more than once (marked DUP above).")
+        print("  A repeated matchup with a round placeholder start time is a phantom")
+        print("  fixture: the bot tracks and alerts on it as if it were a real game.")
     return 0
 
 
