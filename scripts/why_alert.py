@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from odds_watcher.cli import _components
-from odds_watcher.config import Config
+from odds_watcher.config import Config, load_dotenv
 from odds_watcher.util import format_clock, now_ts
 
 
@@ -43,6 +43,9 @@ def classify(cfg: Config, seconds: float) -> str:
 
 def main(argv: list[str]) -> int:
     env_file = Path(".env")
+    # from_env reads os.environ only; the .env has to be loaded first, exactly
+    # as the CLI does, or this reports defaults instead of the live config.
+    load_dotenv(env_file)
     config = Config.from_env(required=(), env_file=env_file)
     sport = argv[1] if len(argv) > 1 else (config.sports[0] if config.sports else "baseball")
 
