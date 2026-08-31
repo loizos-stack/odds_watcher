@@ -24,7 +24,7 @@ from .http import TransportError
 from .odds_api import BudgetExceeded, Event, Quote
 from .store import Store
 from .telegram import TelegramClient, format_alert, format_player_digest, split_message
-from .util import format_countdown, now_ts
+from .util import format_clock, format_countdown, now_ts
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,27 @@ PARTIAL_REFRESH_RETRY_SECONDS = 600
 SPORTS_REFRESH_SECONDS = 86400
 ALERTS_PER_MESSAGE = 5
 STATE_RETENTION_SECONDS = 6 * 3600
+
+
+def placeholder_start_times(events: Iterable[Event], min_cluster: int) -> set[float]:
+    """Kick-off times that are placeholders rather than real schedule.
+
+    Some providers stamp fixtures they have not scheduled yet with one shared,
+    on-the-hour default -- a dozen MLB games all at 19:00:00Z. A real slate
+    never does this: simultaneous first pitches land on odd minutes (:05, :07,
+    :40) and never a dozen at the identical second. So a start time that is
+    exactly on the hour AND shared by ``min_cluster`` or more fixtures is taken
+    to be a placeholder. ``min_cluster`` of 0 disables the check.
+    """
+    if min_cluster <= 0:
+        return set()
+    counts: dict[float, int] = defaultdict(int)
+    for event in events:
+        ts = event.start_ts
+        # Exactly on the UTC hour: a real first pitch almost never is.
+        if ts is not None and ts % 3600 == 0:
+            counts[ts] += 1
+    return {ts for ts, n in counts.items() if n >= min_cluster}
 
 
 def chunked(items: Sequence, size: int) -> Iterable[Sequence]:
@@ -122,6 +143,22 @@ class Watcher:
             done += 1
 
         if events or force:
+            placeholders = placeholder_start_times(
+                events.values(), self.config.placeholder_min_cluster
+            )
+            if placeholders:
+                dropped = [e for e in events.values() if e.start_ts in placeholders]
+                events = {
+                    eid: e for eid, e in events.items() if e.start_ts not in placeholders
+                }
+                # These carry a fake kick-off time, so tracking them would spend
+                # budget and fire alerts on games that are not really starting.
+                log.warning(
+                    "ignoring %d fixture(s) on a placeholder start time (%s); the "
+                    "provider has not scheduled them yet",
+                    len(dropped),
+                    ", ".join(sorted(format_clock(ts, "UTC") for ts in placeholders)),
+                )
             self._events = sorted(events.values(), key=lambda e: e.start_ts)
             self._events_fetched_at = now
             self._events_partial = partial

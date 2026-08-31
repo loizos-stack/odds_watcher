@@ -129,6 +129,14 @@ class Config:
     # Send the hourly digest to a different Telegram chat. Empty = same chat as
     # the per-drop alerts.
     digest_chat_id: str = ""
+    # Some providers hand out a placeholder kick-off time for fixtures they have
+    # not scheduled yet -- a whole slate stamped with one identical, on-the-hour
+    # timestamp (e.g. every MLB game at 19:00:00Z). Those are not real starts,
+    # so the watcher must not track or alert on them. When this many fixtures
+    # share the exact same on-the-hour start time, that time is treated as a
+    # placeholder and the fixtures are skipped until a real time appears. 0
+    # disables the check.
+    placeholder_min_cluster: int = 6
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
     # Ceiling on messages from one poll. With every market and player prop
@@ -315,6 +323,7 @@ class Config:
             display_timezone=display_timezone,
             digest_interval_seconds=_get_int(env, "DIGEST_INTERVAL_SECONDS", 0, minimum=0),
             digest_chat_id=env.get("TELEGRAM_DIGEST_CHAT_ID", "").strip(),
+            placeholder_min_cluster=_get_int(env, "PLACEHOLDER_MIN_CLUSTER", 6, minimum=0),
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
             poll_interval_seconds=poll_interval,

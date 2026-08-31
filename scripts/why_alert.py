@@ -23,6 +23,7 @@ from pathlib import Path
 from odds_watcher.cli import _components
 from odds_watcher.config import Config, load_dotenv
 from odds_watcher.util import format_clock, now_ts
+from odds_watcher.watcher import placeholder_start_times
 
 
 def classify(cfg: Config, seconds: float) -> str:
@@ -78,29 +79,36 @@ def main(argv: list[str]) -> int:
     for e in events:
         counts[pair(e)] = counts.get(pair(e), 0) + 1
 
+    # The same rule the watcher now applies: an on-the-hour start time shared by
+    # this many fixtures is a placeholder, and those fixtures are skipped.
+    placeholders = placeholder_start_times(events, config.placeholder_min_cluster)
+
     tz = config.display_timezone
     print(f"{'fixture':<34}  {'event id':<14}  {'start (UTC)':<20}  "
-          f"{'start (' + tz + ')':<24}  {'T-minus':>8}  {'dup':<4} state")
+          f"{'start (' + tz + ')':<24}  {'T-minus':>8}  {'flag':<12} state")
+    skipped = 0
     for e in events:
         seconds = e.seconds_to_start(now)
         mins = seconds / 60.0
-        # A start time on an exact 5-minute boundary AND repeated matchup is
-        # the signature of a placeholder rather than a scheduled first pitch.
-        dup = "DUP" if counts[pair(e)] > 1 else ""
+        if e.start_ts in placeholders:
+            flag, state = "PLACEHOLDER", "skipped (fake start time)"
+            skipped += 1
+        else:
+            flag = "DUP" if counts[pair(e)] > 1 else ""
+            state = classify(config, seconds)
         print(
             f"{e.name[:34]:<34}  "
             f"{str(e.id)[:14]:<14}  "
             f"{format_clock(e.start_ts, 'UTC'):<20}  "
             f"{format_clock(e.start_ts, tz):<24}  "
             f"{mins:>7.0f}m  "
-            f"{dup:<4} {classify(config, seconds)}"
+            f"{flag:<12} {state}"
         )
 
-    dups = sum(1 for n in counts.values() if n > 1)
-    if dups:
-        print(f"\n! {dups} matchup(s) are listed more than once (marked DUP above).")
-        print("  A repeated matchup with a round placeholder start time is a phantom")
-        print("  fixture: the bot tracks and alerts on it as if it were a real game.")
+    if skipped:
+        print(f"\n{skipped} fixture(s) sit on a placeholder start time and are now")
+        print("  skipped: no tracking, no alerts, until the provider gives a real time.")
+        print(f"  (threshold: PLACEHOLDER_MIN_CLUSTER={config.placeholder_min_cluster})")
     return 0
 
 

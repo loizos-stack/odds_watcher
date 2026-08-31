@@ -1,8 +1,10 @@
 """End-to-end behaviour of one poll cycle, with the network faked out."""
 
+import dataclasses
+
 from odds_watcher.http import HttpError
 from odds_watcher.odds_api import Event, Quote
-from odds_watcher.watcher import Watcher
+from odds_watcher.watcher import Watcher, placeholder_start_times
 
 KICKOFF = 1_700_000_000.0
 
@@ -78,6 +80,42 @@ def test_events_are_only_refetched_when_stale(config, store):
     assert api.event_calls == 1
     watcher.poll_once(at(29) + config.events_refresh_seconds + 1)
     assert api.event_calls == 2
+
+
+HOUR_TS = 1_700_000_000.0 // 3600 * 3600  # an exact UTC hour boundary
+
+
+def test_placeholder_start_times_flags_an_on_the_hour_cluster():
+    # A dozen games stamped with the identical on-the-hour default...
+    fake = [Event(id=str(i), start_ts=HOUR_TS, home=f"H{i}", away=f"A{i}") for i in range(12)]
+    # ...alongside real, staggered first pitches that must survive.
+    real = [
+        Event(id="r1", start_ts=HOUR_TS + 305, home="Real1", away="X"),
+        Event(id="r2", start_ts=HOUR_TS + 4238, home="Real2", away="Y"),
+    ]
+    flagged = placeholder_start_times(fake + real, min_cluster=6)
+    assert flagged == {HOUR_TS}
+
+
+def test_placeholder_check_spares_a_real_simultaneous_wave():
+    # Seven genuine games at :05 share a time but are not on the hour.
+    wave = [Event(id=str(i), start_ts=HOUR_TS + 300, home=f"H{i}", away="A") for i in range(7)]
+    assert placeholder_start_times(wave, min_cluster=6) == set()
+
+
+def test_placeholder_check_is_disabled_by_zero():
+    fake = [Event(id=str(i), start_ts=HOUR_TS, home=f"H{i}", away="A") for i in range(12)]
+    assert placeholder_start_times(fake, min_cluster=0) == set()
+
+
+def test_refresh_events_drops_placeholder_fixtures(config, store):
+    cfg = dataclasses.replace(config, placeholder_min_cluster=6)
+    phantom = [Event(id=f"p{i}", start_ts=HOUR_TS, home=f"H{i}", away="A") for i in range(8)]
+    real = Event(id="real", start_ts=HOUR_TS + 305, home="Real", away="Team")
+    watcher, _api, _tg = make(cfg, store, [[]], events=(*phantom, real))
+    events = watcher.refresh_events(HOUR_TS - 600, force=True)
+    ids = {e.id for e in events}
+    assert ids == {"real"}  # the eight phantom fixtures are gone
 
 
 def test_odds_are_not_requested_for_distant_events(config, store):
