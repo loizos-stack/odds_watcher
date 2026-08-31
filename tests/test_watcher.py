@@ -163,9 +163,27 @@ def test_alerts_for_several_events_are_grouped(config, store):
     watcher.poll_once(at(20))
     alerts = watcher.poll_once(at(5))
     assert len(alerts) == 2
-    assert len(telegram.sent) == 2  # one message per drop
-    joined = "\n".join(telegram.sent)
-    assert "Ajax vs PSV" in joined and "Roma vs Lazio" in joined
+    assert len(telegram.sent) == 1  # both drops packed into one message
+    assert "Ajax vs PSV" in telegram.sent[0] and "Roma vs Lazio" in telegram.sent[0]
+
+
+def test_drops_split_into_several_messages_when_too_long(config, store, monkeypatch):
+    import odds_watcher.watcher as watcher_mod
+
+    # A tiny limit forces each drop into its own message; both must still be
+    # delivered and marked, and neither re-alerts on the next poll.
+    monkeypatch.setattr(watcher_mod, "MESSAGE_CHAR_LIMIT", 50)
+    other = Event(id="e3", start_ts=KICKOFF, home="Roma", away="Lazio")
+    watcher, _api, telegram = make(
+        config,
+        store,
+        [[quote(2.00), quote(2.00, event_id="e3")], [quote(1.70), quote(1.70, event_id="e3")]],
+        events=(EVENT, other),
+    )
+    watcher.poll_once(at(20))
+    watcher.poll_once(at(5))
+    assert len(telegram.sent) == 2  # split because one packed message is too long
+    assert watcher.poll_once(at(4)) == []  # both marked delivered, nothing re-alerts
 
 
 def test_poll_interval_is_fast_near_kickoff_and_lazy_otherwise(config, store):

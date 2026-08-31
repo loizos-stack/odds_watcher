@@ -34,6 +34,9 @@ EVENTS_PER_ODDS_REQUEST = 20
 PARTIAL_REFRESH_RETRY_SECONDS = 600
 SPORTS_REFRESH_SECONDS = 86400
 ALERTS_PER_MESSAGE = 5
+# Telegram rejects messages over 4096 chars; pack drops up to a safe margin
+# below that, then start another message.
+MESSAGE_CHAR_LIMIT = 3800
 STATE_RETENTION_SECONDS = 6 * 3600
 
 
@@ -370,16 +373,44 @@ class Watcher:
         self._digest_started = now
 
     def dispatch(self, alerts: list[Alert], now: float) -> None:
-        """Send one Telegram message per drop, marking each once delivered."""
-        for alert in alerts:
+        """Send the poll's drops as one long message, split only to fit Telegram.
+
+        Watching several books can surface many drops in a single poll, and one
+        message each floods the chat. Instead the drops are packed into as few
+        messages as Telegram's size limit allows. Alerts are marked delivered
+        per message, so a message that fails to send leaves its drops unmarked
+        and they are retried on the next poll.
+        """
+        if not alerts:
+            return
+        separator = "\n\n" + "—" * 12 + "\n\n"
+        pending_text = ""
+        pending: list[Alert] = []
+
+        def flush() -> None:
+            nonlocal pending_text, pending
+            if not pending:
+                return
             try:
-                self.telegram.send_message(
-                    format_alert(alert, self.config.odds_format, self.config.display_timezone)
-                )
+                self.telegram.send_message(pending_text)
             except TransportError:
-                log.error("could not deliver an alert; will retry next poll")
-                continue
-            self.store.mark_alerted(alert.quote, ts=now)
+                log.error(
+                    "could not deliver %d alert(s); will retry next poll", len(pending)
+                )
+            else:
+                for alert in pending:
+                    self.store.mark_alerted(alert.quote, ts=now)
+            pending_text, pending = "", []
+
+        for alert in alerts:
+            block = format_alert(alert, self.config.odds_format, self.config.display_timezone)
+            candidate = block if not pending_text else pending_text + separator + block
+            if len(candidate) > MESSAGE_CHAR_LIMIT and pending:
+                flush()
+                pending_text, pending = block, [alert]
+            else:
+                pending_text, pending = candidate, pending + [alert]
+        flush()
         self.store.commit()
 
     # -- loop -------------------------------------------------------------
