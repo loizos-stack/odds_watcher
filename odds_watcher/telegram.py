@@ -97,7 +97,7 @@ def format_price(decimal_odds: float, odds_format: str = "decimal") -> str:
     if decimal_odds is None or decimal_odds <= 1.0:
         return "-"
     if odds_format != "american":
-        return f"{decimal_odds:.3f}"
+        return f"{decimal_odds:.2f}"
     from .detector import decimal_to_american
 
     return f"{decimal_to_american(decimal_odds):+.0f}"
@@ -223,16 +223,18 @@ def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") ->
     return "\n".join(lines)
 
 
-def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decimal"):
-    """An hour of drops, grouped by player, one line per market and book.
+def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decimal",
+                         window_label=""):
+    """An hour (or window) of drops, grouped by player, with the drop percentage.
 
     Reads like:
 
-        Summary for the past hour
-
-        Jared Triolo
-        Over 0.5 Hits from 1.34 to 1.30 on DraftKings
-        Over 0.5 Singles from 1.34 to 1.30 on Bet365
+        📊 Summary — last 30 min
+        6 drops · 3 players
+        ──────────────
+        👤 Jared Triolo
+        🟡 Over 0.5 Hits   1.34 → 1.30   -4.3%   DraftKings
+        🟠 Over 0.5 Home Runs   8.43 → 7.50   -12.4%   Bet365
 
     A line that dropped several times keeps its earliest opening and latest
     price, so each entry is one net move.
@@ -263,23 +265,30 @@ def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decima
                 rec["last"], rec["last_ts"] = a.quote.odds, a.observed_ts
 
     moves = sum(len(v) for v in players.values())
-    out = [f"📋 <b>Summary for the past hour</b> ({moves} drop(s), {len(order)} player(s))"]
+    title = f"📊 <b>Summary — last {window_label}</b>" if window_label else "📊 <b>Summary</b>"
+    out = [title, f"{moves} drop(s) · {len(order)} player(s)", "──────────────"]
     for who in order:
-        out.append("")
-        out.append(f"<b>{_esc(who)}</b>")
-        for rec in players[who].values():
+        # Biggest mover first within each player.
+        rows = sorted(
+            players[who].values(),
+            key=lambda r: measure_drop(r["open"], r["last"], metric),
+            reverse=True,
+        )
+        out.append(f"👤 <b>{_esc(who)}</b>")
+        for rec in rows:
             line = (rec["line"] or "").strip()
             line = f"{line} " if line else ""
             side = f"{rec['side']} " if rec["side"] else ""
             net = measure_drop(rec["open"], rec["last"], metric)
             out.append(
-                f"{severity_dot(net)} "
-                f"{_esc(side)}{_esc(line)}{_esc(humanize_market(rec['market']))} "
-                f"from {_esc(format_price(rec['open'], odds_format))} "
-                f"to {_esc(format_price(rec['last'], odds_format))} "
-                f"on {_esc(book_name(rec['book']))}"
+                f"{severity_dot(net)} {_esc(side)}{_esc(line)}"
+                f"{_esc(humanize_market(rec['market']))}   "
+                f"{_esc(format_price(rec['open'], odds_format))} → "
+                f"<b>{_esc(format_price(rec['last'], odds_format))}</b>   "
+                f"<b>-{net:.1f}%</b>   {_esc(book_name(rec['book']))}"
             )
-    return "\n".join(out)
+        out.append("")
+    return "\n".join(out).rstrip()
 
 
 def split_message(text: str, limit: int = 3800):

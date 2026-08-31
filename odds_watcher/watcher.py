@@ -315,9 +315,11 @@ class Watcher:
             return
         if now - self._digest_started < self.config.digest_interval_seconds:
             return
+        minutes = max(1, self.config.digest_interval_seconds // 60)
+        label = "hour" if minutes == 60 else f"{minutes} min"
         text = format_player_digest(
             self._digest, self.config.odds_format, self.config.display_timezone,
-            self.config.drop_metric,
+            self.config.drop_metric, window_label=label,
         )
         chat = self.config.digest_chat_id or None
         for chunk in split_message(text):
