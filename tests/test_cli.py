@@ -383,3 +383,41 @@ def test_prop_sports_caches_what_it_finds(config, wired, tmp_path, monkeypatch):
     keys, _checked = reopened.get_market_keys(PROP_KEYS_PREFIX + "baseball_mlb", 86400)
     assert keys == ["batter_home_runs"]
     reopened.close()
+
+
+def test_prop_books_tallies_props_per_bookmaker(config, tmp_path, monkeypatch, capsys):
+    """Show which books actually return player props for a sport."""
+    import dataclasses
+    from odds_watcher.store import RequestBudget, Store
+    from odds_watcher.parlayapi import ParlayApiClient
+
+    payload = {"events": [{
+        "id": "x", "canonical_event_id": "c1",
+        "commence_time": "2026-08-30T00:00:00Z",
+        "home_team": "A", "away_team": "B",
+        "bookmakers": [
+            {"key": "draftkings", "markets": [
+                {"key": "player_hits", "outcomes": [{"name": "Judge Over", "price": -110}]},
+                {"key": "player_strikeouts", "outcomes": [{"name": "Cole Over", "price": -120}]},
+            ]},
+            {"key": "bet365", "markets": [
+                {"key": "player_hits", "outcomes": [{"name": "Judge Over", "price": -115}]},
+            ]},
+        ],
+    }]}
+    monkeypatch.setattr("odds_watcher.parlayapi.request_json_with_headers",
+                        lambda url, **kw: (payload, {}))
+    api = ParlayApiClient("k", prop_markets=("player_hits",))
+    store = Store(tmp_path / "pb.db")
+    monkeypatch.setattr(cli, "_components",
+                        lambda c: (store, RequestBudget(store, 100, 500), api, None))
+
+    rc = cli.cmd_prop_books(dataclasses.replace(config, sports=("baseball_mlb",),
+                                                odds_provider="parlay-api"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "draftkings" in out and "bet365" in out
+    # draftkings quoted two prop markets, bet365 one.
+    dk = next(l for l in out.splitlines() if "draftkings" in l)
+    b3 = next(l for l in out.splitlines() if "bet365" in l)
+    assert dk.strip().endswith("2") and b3.strip().endswith("1")

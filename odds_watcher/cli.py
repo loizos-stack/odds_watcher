@@ -48,6 +48,7 @@ REQUIRED_CREDENTIALS = {
     "verify": ("ODDS_API_KEY",),
     "preset": (),
     "prop-sports": ("ODDS_API_KEY",),
+    "prop-books": ("ODDS_API_KEY",),
     "select-bookmakers": ("ODDS_API_KEY",),
     "status": (),
 }
@@ -62,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "verify", "prop-sports", "preset", "chat-id", "status"],
+        choices=["run", "once", "check", "select-bookmakers", "bookmakers", "sports", "leagues", "markets", "props", "probe", "coverage", "usage", "movements", "verify", "prop-sports", "prop-books", "preset", "chat-id", "status"],
     )
     parser.add_argument(
         "--sport",
@@ -991,6 +992,52 @@ def cmd_prop_sports(config: Config, limit: Optional[int] = None) -> int:
     return 0
 
 
+def cmd_prop_books(config: Config) -> int:
+    """List which bookmakers actually return player props for a sport.
+
+    Asks the props endpoint for every book and every prop market, then tallies
+    the prices each book returned. A book with zero is one that does not price
+    props for this sport (right now), so it is dead weight in BOOKMAKERS.
+    """
+    from collections import Counter
+
+    store, budget, api, _ = _components(config)
+    if not hasattr(api, "_sport_props"):
+        print(f"{config.odds_provider} has no props endpoint to survey", file=sys.stderr)
+        store.close()
+        return 2
+    try:
+        sport = _sample_sport(api, config)
+        # Survey every book: drop the bookmaker filter, keep the configured
+        # prop markets (or "all" if that is what is set).
+        api.bookmakers = ()
+        if not api.prop_markets:
+            api.prop_markets = ("all",)
+        payload = api._sport_props(sport)
+        quotes = api.parse_quotes(payload)
+    except UnsupportedByProvider as exc:
+        print(f"! {exc}", file=sys.stderr); store.close(); return 0
+    except (TransportError, BudgetExceeded) as exc:
+        print(f"✗ {exc}", file=sys.stderr); _budget_hint(config, exc); store.close(); return 1
+    finally:
+        pass
+
+    counts = Counter(q.bookmaker for q in quotes)
+    store.close()
+    if not counts:
+        print(f"no player props returned for {sport} right now — try closer to "
+              "game time, when books post them", file=sys.stderr)
+        return 1
+
+    width = max(len(b) for b in counts)
+    print(f"player-prop prices per bookmaker for {sport}:\n")
+    for book, n in counts.most_common():
+        print(f"  {book.ljust(width)}  {n:>5}")
+    print(f"\n{len(counts)} book(s) price props for this sport. Put the ones you "
+          "want in BOOKMAKERS.")
+    return 0
+
+
 def cmd_status(config: Config, env_file: Optional[Path] = None, reset: bool = False) -> int:
     store, budget, _, _ = _components(config)
     if reset:
@@ -1559,6 +1606,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_verify(config, args.wait)
     if args.command == "prop-sports":
         return cmd_prop_sports(config, args.limit)
+    if args.command == "prop-books":
+        return cmd_prop_books(config)
     if args.command == "usage":
         return cmd_usage(config, args.check_balance)
     if args.command == "status":
