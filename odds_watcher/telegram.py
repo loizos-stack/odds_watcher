@@ -34,12 +34,14 @@ class TelegramClient:
     def _url(self, method: str) -> str:
         return build_url(self.base_url, f"bot{self.token}/{method}")
 
-    def send_message(self, text: str, *, disable_preview: bool = True) -> Optional[dict]:
+    def send_message(self, text: str, *, disable_preview: bool = True,
+                     chat_id: Optional[str] = None) -> Optional[dict]:
+        target = chat_id or self.chat_id
         if self.dry_run:
-            log.info("[dry-run] would send to %s:\n%s", self.chat_id, text)
+            log.info("[dry-run] would send to %s:\n%s", target, text)
             return None
         payload = {
-            "chat_id": self.chat_id,
+            "chat_id": target,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": disable_preview,

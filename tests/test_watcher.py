@@ -1291,3 +1291,28 @@ def test_digest_and_per_drop_alerts_both_fire(config, store):
     watcher.flush_digest_if_due(at(8) + 3601)
     assert len(tg.sent) == 2                     # now the hourly summary too
     assert "Summary for the past hour" in tg.sent[1]
+
+
+def test_digest_goes_to_its_own_chat_when_set(config, store):
+    """The hourly digest can target a different Telegram chat than the alerts."""
+    import dataclasses
+
+    class ChatAwareTelegram:
+        def __init__(self):
+            self.sent = []
+
+        def send_message(self, text, chat_id=None, **kw):
+            self.sent.append((chat_id, text))
+            return {"ok": True}
+
+    cfg = dataclasses.replace(config, digest_interval_seconds=3600, min_drop_pct=5.0,
+                              digest_chat_id="99887766")
+    tg = ChatAwareTelegram()
+    watcher = Watcher(cfg, FakeApi([EVENT], [[quote(2.00)], [quote(1.70)]]), tg, store)
+    watcher.poll_once(at(20))
+    watcher.poll_once(at(8))       # per-drop alert -> default chat (chat_id None)
+    watcher.flush_digest_if_due(at(8) + 3601)
+
+    per_drop = [c for c, _ in tg.sent if c is None]
+    digest = [c for c, _ in tg.sent if c == "99887766"]
+    assert per_drop and digest            # both went out, to different chats

@@ -319,9 +319,10 @@ class Watcher:
             self._digest, self.config.odds_format, self.config.display_timezone,
             self.config.drop_metric,
         )
+        chat = self.config.digest_chat_id or None
         for chunk in split_message(text):
             try:
-                self.telegram.send_message(chunk)
+                self.telegram.send_message(chunk, chat_id=chat)
             except TransportError:
                 log.error("could not deliver the hourly digest; will retry next poll")
                 return  # keep the buffer, try again on the next poll

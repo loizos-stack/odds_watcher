@@ -126,6 +126,9 @@ class Config:
     # Batch alerts into one per-player summary every N seconds instead of
     # sending each drop as it happens. 0 = send immediately (the default).
     digest_interval_seconds: int = 0
+    # Send the hourly digest to a different Telegram chat. Empty = same chat as
+    # the per-drop alerts.
+    digest_chat_id: str = ""
     # Ignore prices below this (a 1.02 favourite drifts in meaningless %).
     min_odds: float = 1.05
     # Ceiling on messages from one poll. With every market and player prop
@@ -311,6 +314,7 @@ class Config:
             follow_up_drop_pct=follow_up,
             display_timezone=display_timezone,
             digest_interval_seconds=_get_int(env, "DIGEST_INTERVAL_SECONDS", 0, minimum=0),
+            digest_chat_id=env.get("TELEGRAM_DIGEST_CHAT_ID", "").strip(),
             min_odds=_get_float(env, "MIN_ODDS", 1.05, minimum=1.0),
             max_alerts_per_poll=_get_int(env, "MAX_ALERTS_PER_POLL", 20, minimum=1),
             poll_interval_seconds=poll_interval,
