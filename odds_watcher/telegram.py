@@ -107,6 +107,8 @@ _BOOK_NAMES = {
     "bet365": "Bet365",
     "draftkings": "DraftKings",
     "fanduel": "FanDuel",
+    "prophetx": "ProphetX",
+    "novig": "Novig",
     "betano": "Betano",
     "caesars": "Caesars",
     "betmgm": "BetMGM",
@@ -123,6 +125,8 @@ _BOOK_COLOURS = {
     "draftkings": "🟥",
     "fanduel": "🟦",
     "prophetx": "🟪",
+    "novig": "⬛",
+    "betmgm": "🟨",
 }
 
 
