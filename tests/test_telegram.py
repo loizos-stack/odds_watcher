@@ -66,7 +66,7 @@ def test_alert_keeps_the_handicap_line_and_named_outcomes():
 
 
 def test_repeat_alerts_are_labelled():
-    assert "🔁" in format_alert(alert(repeat=True))
+    assert "↻" in format_alert(alert(repeat=True))
 
 
 def test_digest_joins_multiple_alerts():
@@ -100,3 +100,22 @@ def test_chat_id_reports_a_telegram_outage_without_a_traceback(monkeypatch, caps
     )
     assert cmd_chat_id(config) == 1
     assert "could not reach Telegram" in capsys.readouterr().err
+
+
+def test_severity_dot_thresholds():
+    from odds_watcher.telegram import severity_dot
+    assert severity_dot(4.3) == "🟡"
+    assert severity_dot(10.0) == "🟡"
+    assert severity_dot(10.01) == "🟠"
+    assert severity_dot(15.0) == "🟠"
+    assert severity_dot(15.01) == "🔴"
+    assert severity_dot(30.0) == "🔴"
+
+
+def test_alert_header_dot_reflects_the_drop_size():
+    y = format_alert(alert(drop_pct=6.0))
+    o = format_alert(alert(drop_pct=12.0))
+    r = format_alert(alert(drop_pct=20.0))
+    assert y.startswith("🟡")
+    assert o.startswith("🟠")
+    assert r.startswith("🔴")

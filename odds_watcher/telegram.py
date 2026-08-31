@@ -6,7 +6,7 @@ import html
 import logging
 from typing import Optional
 
-from .detector import Alert
+from .detector import Alert, measure_drop
 from .http import TransportError, build_url, request_json
 from .util import format_clock, format_countdown, format_date, format_time
 
@@ -117,6 +117,15 @@ _BOOK_NAMES = {
 _SIDE_WORDS = {"over", "under", "yes", "no"}
 
 
+def severity_dot(drop_pct: float) -> str:
+    """Colour a drop by size: 4-10% yellow, 10.01-15% orange, 15.01%+ red."""
+    if drop_pct <= 10.0:
+        return "🟡"
+    if drop_pct <= 15.0:
+        return "🟠"
+    return "🔴"
+
+
 def book_name(key: str) -> str:
     """A book's display name; the API keys them lowercase."""
     return _BOOK_NAMES.get(key.strip().lower(), key.strip().title())
@@ -181,9 +190,10 @@ def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") ->
             side = side.strip().title()
         label = _esc(humanize_market(quote.market))
 
-    heading = "🔁 <b>Odds update" if alert.is_repeat else "🟡 <b>Odds update"
+    dot = severity_dot(alert.drop_pct)
+    tail = " ↻" if alert.is_repeat else ""
     lines = [
-        f"{heading} on {_esc(book_name(quote.bookmaker))}</b>",
+        f"{dot} <b>Odds update on {_esc(book_name(quote.bookmaker))}</b>{tail}",
         "",
         _esc(sport_line(event)),
         f"<b>{_esc(event.name)}</b>",
@@ -261,7 +271,9 @@ def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decima
             line = (rec["line"] or "").strip()
             line = f"{line} " if line else ""
             side = f"{rec['side']} " if rec["side"] else ""
+            net = measure_drop(rec["open"], rec["last"], metric)
             out.append(
+                f"{severity_dot(net)} "
                 f"{_esc(side)}{_esc(line)}{_esc(humanize_market(rec['market']))} "
                 f"from {_esc(format_price(rec['open'], odds_format))} "
                 f"to {_esc(format_price(rec['last'], odds_format))} "

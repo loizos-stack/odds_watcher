@@ -23,7 +23,7 @@ from .detector import Alert, DropDetector
 from .http import TransportError
 from .odds_api import BudgetExceeded, Event, Quote
 from .store import Store
-from .telegram import TelegramClient, format_digest, format_player_digest, split_message
+from .telegram import TelegramClient, format_alert, format_player_digest, split_message
 from .util import format_countdown, now_ts
 
 log = logging.getLogger(__name__)
@@ -331,15 +331,16 @@ class Watcher:
         self._digest_started = now
 
     def dispatch(self, alerts: list[Alert], now: float) -> None:
-        """Send alerts to Telegram, marking each one only once it is delivered."""
-        for group in chunked(alerts, ALERTS_PER_MESSAGE):
+        """Send one Telegram message per drop, marking each once delivered."""
+        for alert in alerts:
             try:
-                self.telegram.send_message(format_digest(list(group), self.config.odds_format, self.config.display_timezone))
+                self.telegram.send_message(
+                    format_alert(alert, self.config.odds_format, self.config.display_timezone)
+                )
             except TransportError:
-                log.error("could not deliver %d alert(s); will retry next poll", len(group))
+                log.error("could not deliver an alert; will retry next poll")
                 continue
-            for alert in group:
-                self.store.mark_alerted(alert.quote, ts=now)
+            self.store.mark_alerted(alert.quote, ts=now)
         self.store.commit()
 
     # -- loop -------------------------------------------------------------

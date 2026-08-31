@@ -125,8 +125,9 @@ def test_alerts_for_several_events_are_grouped(config, store):
     watcher.poll_once(at(20))
     alerts = watcher.poll_once(at(5))
     assert len(alerts) == 2
-    assert len(telegram.sent) == 1  # one digest message
-    assert "Ajax vs PSV" in telegram.sent[0] and "Roma vs Lazio" in telegram.sent[0]
+    assert len(telegram.sent) == 2  # one message per drop
+    joined = "\n".join(telegram.sent)
+    assert "Ajax vs PSV" in joined and "Roma vs Lazio" in joined
 
 
 def test_poll_interval_is_fast_near_kickoff_and_lazy_otherwise(config, store):
