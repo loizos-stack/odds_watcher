@@ -1,6 +1,11 @@
 from odds_watcher.detector import Alert
 from odds_watcher.odds_api import Event, Quote
-from odds_watcher.telegram import TelegramClient, format_alert, format_digest
+from odds_watcher.telegram import (
+    TelegramClient,
+    format_alert,
+    format_digest,
+    format_player_digest,
+)
 
 EVENT = Event(
     id="e1",
@@ -73,6 +78,17 @@ def test_digest_joins_multiple_alerts():
     text = format_digest([alert(), alert(quote=Quote("e1", "betano", "h2h", "", "Away", 3.1))])
     assert text.count("Odds update on") == 2
     assert "Betano" in text
+
+
+def test_player_digest_names_the_game_and_start_time():
+    """Each player heading is followed by the matchup (bold) and start time."""
+    a = alert(quote=Quote("e1", "draftkings", "player_batter_hits", "0.5",
+                          "Jared Triolo Over", 1.30),
+              reference_odds=1.34, opening_odds=1.34, drop_pct=3.0)
+    text = format_player_digest([a], window_label="30 min")
+    assert "👤 <b>Jared Triolo</b>" in text
+    assert "🏟 <b>Ajax &lt;A&gt; vs PSV</b>" in text  # matchup, HTML-escaped
+    assert "2023" in text  # start date rendered from the event
 
 
 def test_dry_run_does_not_send(caplog):

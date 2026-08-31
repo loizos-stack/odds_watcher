@@ -249,6 +249,7 @@ def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decima
         6 drops · 3 players
         ──────────────
         👤 Jared Triolo
+        🏟 Pirates vs Brewers · 31.08.2026 19:05
         🟡 Over 0.5 Hits   1.34 → 1.30   -4.3%   DraftKings
         🟠 Over 0.5 Home Runs   8.43 → 7.50   -12.4%   Bet365
 
@@ -256,6 +257,7 @@ def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decima
     price, so each entry is one net move.
     """
     players: dict = {}
+    events: dict = {}
     order: list = []
     for a in alerts:
         player, side = split_prop_outcome(a.quote.outcome)
@@ -265,6 +267,7 @@ def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decima
         opening_ts = a.opening_ts or a.observed_ts
         if who not in players:
             players[who] = {}
+            events[who] = a.event
             order.append(who)
         rec = players[who].get(key)
         if rec is None:
@@ -291,6 +294,11 @@ def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decima
             reverse=True,
         )
         out.append(f"👤 <b>{_esc(who)}</b>")
+        event = events.get(who)
+        if event is not None and getattr(event, "name", ""):
+            matchup = f"🏟 <b>{_esc(event.name)}</b>"
+            when = format_date(event.start_ts, tz) if event.start_ts else ""
+            out.append(f"{matchup} · {_esc(when)}" if when else matchup)
         for rec in rows:
             line = (rec["line"] or "").strip()
             line = f"{line} " if line else ""
