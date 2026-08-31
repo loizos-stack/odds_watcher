@@ -26,7 +26,7 @@ def alert(**overrides):
 
 def test_format_alert_contains_the_essentials():
     text = format_alert(alert())
-    assert "Odds update on Bet365" in text
+    assert "Odds update on 🟩 Bet365" in text
     assert "Ajax &lt;A&gt; vs PSV" in text  # user data is HTML-escaped
     assert "Football - Eredivisie" in text
     assert "1.80" in text and "[-10.0%]" in text
@@ -41,7 +41,7 @@ def test_a_prop_alert_reads_as_the_template():
         opening_odds=1.60,
     )
     text = format_alert(a, odds_format="decimal")
-    assert "Odds update on DraftKings" in text
+    assert "Odds update on 🟥 DraftKings" in text
     assert "🟢 Opening (+0.5): Under 1.60" in text
     assert "Player Props - Coby Mayo (Batter Walks) (+0.5): Under <b>1.47</b> ↓ [-13.6%]" in text
     assert "Fair Odds" not in text

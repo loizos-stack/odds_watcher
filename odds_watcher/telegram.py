@@ -116,6 +116,15 @@ _BOOK_NAMES = {
 
 _SIDE_WORDS = {"over", "under", "yes", "no"}
 
+# Telegram HTML has no text colour, so a book's colour is shown as a square
+# next to its name.
+_BOOK_COLOURS = {
+    "bet365": "🟩",
+    "draftkings": "🟥",
+    "fanduel": "🟦",
+    "prophetx": "🟪",
+}
+
 
 def severity_dot(drop_pct: float) -> str:
     """Colour a drop by size: 4-10% yellow, 10.01-15% orange, 15.01%+ red."""
@@ -129,6 +138,13 @@ def severity_dot(drop_pct: float) -> str:
 def book_name(key: str) -> str:
     """A book's display name; the API keys them lowercase."""
     return _BOOK_NAMES.get(key.strip().lower(), key.strip().title())
+
+
+def book_label(key: str) -> str:
+    """Display name with its colour square, e.g. "🟩 Bet365"."""
+    square = _BOOK_COLOURS.get(key.strip().lower())
+    name = book_name(key)
+    return f"{square} {name}" if square else name
 
 
 def sport_line(event) -> str:
@@ -193,7 +209,7 @@ def format_alert(alert: Alert, odds_format: str = "decimal", tz: str = "UTC") ->
     dot = severity_dot(alert.drop_pct)
     tail = " ↻" if alert.is_repeat else ""
     lines = [
-        f"{dot} <b>Odds update on {_esc(book_name(quote.bookmaker))}</b>{tail}",
+        f"{dot} <b>Odds update on {_esc(book_label(quote.bookmaker))}</b>{tail}",
         "",
         _esc(sport_line(event)),
         f"<b>{_esc(event.name)}</b>",
@@ -285,7 +301,7 @@ def format_player_digest(alerts, odds_format="decimal", tz="UTC", metric="decima
                 f"{_esc(humanize_market(rec['market']))}   "
                 f"{_esc(format_price(rec['open'], odds_format))} → "
                 f"<b>{_esc(format_price(rec['last'], odds_format))}</b>   "
-                f"<b>-{net:.1f}%</b>   {_esc(book_name(rec['book']))}"
+                f"<b>-{net:.1f}%</b>   {_esc(book_label(rec['book']))}"
             )
         out.append("")
     return "\n".join(out).rstrip()
